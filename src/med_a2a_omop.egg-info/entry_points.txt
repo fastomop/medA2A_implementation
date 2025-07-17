@@ -1,0 +1,2 @@
+[console_scripts]
+run-med-a2a = med_a2a_omop.runner:main

@@ -1,0 +1,23 @@
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "med_a2a_omop"
+version = "0.1.0"
+description = "A multi-agent framework for medical Q&A on OMOP data."
+dependencies = [
+    "python-dotenv",
+    "uvicorn[standard]",
+    "fastapi",
+    "ollama",
+    "a2a-medical-foundation @ git+https://github.com/fastomop/omcp_a2a.git@feature/medical-a2a-framework",
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+# This creates a command-line executable named 'run-med-a2a'
+# that will call the 'main' function in our 'runner' module.
+run-med-a2a = "med_a2a_omop.runner:main"
+
