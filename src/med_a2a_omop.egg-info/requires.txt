@@ -4,3 +4,5 @@ fastapi
 ollama
 a2a-medical-foundation@ git+https://github.com/fastomop/omcp_a2a.git@feature/medical-a2a-framework
 httpx>=0.28.1
+fastmcp
+mcp>=1.12.1

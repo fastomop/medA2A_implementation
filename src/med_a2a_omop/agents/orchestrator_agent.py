@@ -1,27 +1,76 @@
 
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from a2a.types import AgentCard, AgentCapabilities
 
 from a2a.client import A2AClient
 from a2a.types import Message, TextPart, Role, SendMessageSuccessResponse, JSONRPCErrorResponse
-from a2a_medical.base.agent import MedicalAgent, ProcessedObservation, Action, ActionResult, MentalState
+from a2a_medical.base.agent import MedicalAgent, ProcessedObservation, Action, ActionResult, MentalState, WorldModel
 from a2a_medical.integrations.ollama import OllamaReasoningMixin
 
 from ..models.a2a_messages import OMOPQueryRequest, OMOPQueryResponse
+
+
+class OrchestratorWorldModel(WorldModel):
+    """Simple world model for orchestrator operations."""
+    
+    def __init__(self):
+        super().__init__()
+        self.user_queries: List[str] = []
+        self.agent_responses: List[Dict[str, Any]] = []
+        
+    def update(self, observation: ProcessedObservation) -> None:
+        """Update the world model with new observations."""
+        if isinstance(observation.data, str):
+            self.user_queries.append(observation.data)
+        elif isinstance(observation.data, dict):
+            self.agent_responses.append(observation.data)
+        self.last_updated = observation.timestamp
+    
+    def query(self, query: str, context: Optional[Dict[str, Any]] = None) -> Any:
+        """Query the world model for information."""
+        if "recent_queries" in query:
+            return self.user_queries[-5:]
+        elif "responses" in query:
+            return self.agent_responses[-5:]
+        return None
+    
+    def predict(self, scenario: Dict[str, Any]) -> Any:
+        """Make predictions based on the current world model."""
+        return {"confidence": 0.8}
+    
+    def get_state_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current world model state."""
+        base_summary = super().get_state_summary()
+        base_summary.update({
+            "user_queries_count": len(self.user_queries),
+            "agent_responses_count": len(self.agent_responses),
+        })
+        return base_summary
+    
+    def reset(self) -> None:
+        """Reset the world model to initial state."""
+        self.user_queries.clear()
+        self.agent_responses.clear()
+        super().__init__()
 
 class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
     """
     The main agent that orchestrates calls to the OMOPDatabaseAgent via A2A.
     """
     def __init__(self, agent_id: str, omop_agent_client: A2AClient, ollama_model: str = "llama3.1:8b"):
+        # Create world model for this agent
+        world_model = OrchestratorWorldModel()
+        
         super().__init__(
             agent_id=agent_id,
             agent_type="orchestrator",
             capabilities=["user_interaction", "agent_orchestration"],
-            world_model=None,
-            model_name=ollama_model
+            world_model=world_model,
+            model_name=ollama_model,
+            agent_name=f"Orchestrator-{agent_id}",
+            agent_description="Medical orchestrator agent that coordinates between user and OMOP database agent"
         )
         self.omop_agent_client = omop_agent_client
         self.add_client("omop_database_agent", omop_agent_client)
@@ -77,6 +126,11 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
                 )
                 
                 print(f"[Orchestrator] Raw response message: {response_message}")
+                
+                # Check if response_message is None
+                if response_message is None:
+                    print("[Orchestrator] Error: Received None response from OMOP Agent")
+                    return ActionResult(success=False, error="No response from OMOP Agent - check if server is running")
 
                 if isinstance(response_message.root, SendMessageSuccessResponse):
                     if not response_message.root.result.parts:
@@ -84,7 +138,7 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
                         return ActionResult(success=False, error="Response from OMOP agent had no parts.")
 
                     # The response from the OMOP agent is in the message body
-                    response_data = json.loads(response_message.root.result.parts[0].text)
+                    response_data = json.loads(response_message.root.result.parts[0].root.text)
                 elif isinstance(response_message.root, JSONRPCErrorResponse):
                     print(f"[Orchestrator] Error response from OMOP Agent: {response_message.root.error.message}")
                     return ActionResult(success=False, error=f"OMOP Agent Error: {response_message.root.error.message}")
@@ -93,7 +147,11 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
                     return ActionResult(success=False, error="Unexpected response type from OMOP Agent.")
                 print(f"[Orchestrator] Parsed response data: {response_data}")
 
-                omop_response = OMOPQueryResponse(**response_data)
+                if "error" in response_data:
+                    print(f"[Orchestrator] !!! A2A communication failed: {response_data['error']}")
+                    return ActionResult(success=False, error=response_data['error'])
+                else:
+                    omop_response = OMOPQueryResponse(**response_data)
                 
                 # Update our own state with the result
                 self.final_result = omop_response

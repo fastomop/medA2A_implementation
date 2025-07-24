@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 src/med_a2a_omop/__init__.py
 src/med_a2a_omop/run_omop_agent.py
@@ -11,4 +12,5 @@ src/med_a2a_omop.egg-info/top_level.txt
 src/med_a2a_omop/agents/__init__.py
 src/med_a2a_omop/agents/omop_database_agent.py
 src/med_a2a_omop/agents/orchestrator_agent.py
+src/med_a2a_omop/integrations/mcp_official.py
 src/med_a2a_omop/models/a2a_messages.py

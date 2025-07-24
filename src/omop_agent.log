@@ -1,0 +1,49 @@
+INFO:     Started server process [8014]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8002 (Press CTRL+C to quit)
+Unhandled exception: 'MessageSendParams' object has no attribute 'params'
+Traceback (most recent call last):
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/a2a/server/apps/jsonrpc/jsonrpc_app.py", line 219, in _handle_requests
+    return await self._process_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        request_id, a2a_request, call_context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/a2a/server/apps/jsonrpc/jsonrpc_app.py", line 306, in _process_non_streaming_request
+    handler_result = await self.handler.on_message_send(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        request_obj, context
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/a2a/utils/telemetry.py", line 162, in async_wrapper
+    result = await func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/a2a/server/request_handlers/jsonrpc_handler.py", line 87, in on_message_send
+    task_or_message = await self.request_handler.on_message_send(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        request.params, context
+        ^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/a2a/utils/telemetry.py", line 162, in async_wrapper
+    result = await func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/a2a/server/request_handlers/jsonrpc_handler.py", line 88, in on_message_send
+    request.params, context
+    ^^^^^^^^^^^^^^
+  File "/Users/k24118093/Documents/medA2A_implementation/.venv/lib/python3.13/site-packages/pydantic/main.py", line 991, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'MessageSendParams' object has no attribute 'params'
+Request Error (ID: test-request): Code=-32603, Message=''MessageSendParams' object has no attribute 'params''
+[OMOPDatabaseAgent] Initialization completed with MCP and Ollama support.
+Routes registered in app: ['/rpc', '/.well-known/agent-card']
+Agent card URL: http://localhost:8002/omop-db-agent-01
+🚀 Starting OMOP Database Agent server at http://127.0.0.1:8002
+INFO:     127.0.0.1:64391 - "POST /rpc HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [8014]
