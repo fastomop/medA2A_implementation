@@ -6,6 +6,8 @@
 
 > **An intelligent multi-agent framework for natural language querying of OMOP Common Data Model (CDM) healthcare databases.**
 
+**DISCLAIMER: This Repo is still under development please apologise any bugs or rapid changes. For bug reporting please contact k24118093@kcl.ac.uk**
+
 Transform complex medical questions into precise SQL queries using advanced AI agents, comprehensive OMOP CDM knowledge, and multiple interaction modes for maximum flexibility.
 
 ## 🌟 **Key Features**
