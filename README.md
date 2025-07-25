@@ -28,11 +28,6 @@ Transform complex medical questions into precise SQL queries using advanced AI a
 - **OMOP Database Agent**: Specialized in text-to-SQL conversion and database interaction
 - **MCP Integration**: Secure database communication via Model Context Protocol
 
-### 🛡️ **Enterprise-Ready**
-- **Robust Error Handling**: Graceful failure recovery and detailed error reporting
-- **Process Management**: Automatic cleanup and resource management
-- **Database Lock Management**: Prevents conflicts and ensures data integrity
-- **Security**: SQL injection prevention with SELECT-only queries
 
 ## 🚀 **Quick Start**
 
