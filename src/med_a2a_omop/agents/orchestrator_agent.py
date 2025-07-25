@@ -123,8 +123,19 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
             )
 
         elif has_result_for_current_question:
-            system_prompt = "You are a helpful medical assistant. Summarize the following data from a database query into a clear, human-readable answer."
-            prompt = f"The user asked: '{user_question}'. The data is: {json.dumps(final_result.model_dump() if final_result else {})}"
+            # The persona for the final summarization step.
+            system_prompt = """
+You are a helpful and highly knowledgeable Clinical Data Analyst.
+Your role is to interpret the results of a database query and present them to a clinical user in a clear, concise, and insightful way.
+
+**CRITICAL INSTRUCTIONS:**
+1.  **Synthesize, Don't Just State:** Do not just repeat the raw data. Explain what the results *mean*.
+2.  **Address the User's Question Directly:** Start by restating or directly answering the user's original question.
+3.  **Use Clear Formatting:** Use Markdown (bolding, bullet points) to structure your answer for readability.
+4.  **Acknowledge Limitations:** If the result is empty or inconclusive (e.g., `[]` or `0`), state that clearly and explain what it implies (e.g., "no patients met the criteria," "no relevant data was found"). Do not invent data.
+5.  **Be Concise:** Keep the answer brief and to the point.
+"""
+            prompt = f"The user asked: '{user_question}'. The raw data from the database is: {json.dumps(final_result.model_dump() if final_result else {})}"
             
             print("[Orchestrator] Decided to summarize the final result.")
             ollama_response = await self.ollama_reason(prompt, system_prompt=system_prompt)

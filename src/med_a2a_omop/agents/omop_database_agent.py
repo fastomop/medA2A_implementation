@@ -448,7 +448,32 @@ GROUP BY age_group
             domains=["Person"],
             complexity="intermediate"
         )
-        
+
+        templates["average_age_with_demographic_filter"] = OMOPQueryTemplate(
+            name="average_age_with_demographic_filter",
+            description="Calculate the average age of patients filtered by a specific demographic (e.g., gender, race).",
+            sql_template="""
+SELECT AVG(EXTRACT(YEAR FROM CURRENT_DATE) - p.year_of_birth) as avg_age
+FROM {schema}.person p
+WHERE p.{demographic_column} IN (
+    SELECT c.concept_id
+    FROM {schema}.concept c
+    WHERE c.standard_concept = 'S'
+      AND c.domain_id = '{domain_id}'
+      AND LOWER(c.concept_name) LIKE LOWER('%{concept_value}%')
+)
+  AND p.year_of_birth IS NOT NULL
+  AND p.year_of_birth > 1900
+            """.strip(),
+            parameters=["demographic_column", "domain_id", "concept_value"],
+            domains=["Person"],
+            complexity="intermediate",
+            examples=[
+                {"question": "average age of female patients", "demographic_column": "gender_concept_id", "domain_id": "Gender", "concept_value": "female"},
+                {"question": "average age of asian patients", "demographic_column": "race_concept_id", "domain_id": "Race", "concept_value": "asian"}
+            ]
+        )
+          
         return templates
     
     async def explore_database_schema(self, mcp_manager) -> Dict[str, Any]:
@@ -497,78 +522,78 @@ GROUP BY age_group
         self.exploration_status["last_full_exploration"] = exploration_results
         return exploration_results
     
-    def get_comprehensive_context(self, question: str, failed_attempts: Optional[List[Dict]] = None) -> str:
-        """Generate comprehensive context using OMOP CDM knowledge"""
+    def get_comprehensive_context(self, question: str, extracted_context: Dict[str, Any], failed_attempts: Optional[List[Dict]] = None) -> str:
+        """
+        Generates a hyper-focused context string using extracted entities
+        to query the world model for relevant schemas and templates.
+        """
         context_parts = []
         
-        # 1. Identify relevant domain(s) from question
-        relevant_domains = self._identify_relevant_domains(question)
+        # Use domains from the structured extraction
+        relevant_domains = extracted_context.get("domains", [])
+        if not relevant_domains:
+            # Fallback to keyword-based identification if extraction fails
+            relevant_domains = self._identify_relevant_domains(question)
         
         context_parts.append("=== OMOP CDM v5.4 CONTEXT ===")
         context_parts.append(f"Question: {question}")
         context_parts.append(f"Identified Domains: {', '.join(relevant_domains)}")
+        context_parts.append(f"Query Type: {extracted_context.get('query_type', 'unknown')}")
         
-        # 2. Add relevant table schemas
+        # 2. Add relevant table schemas based on extracted domains
         if relevant_domains:
             context_parts.append("\n=== RELEVANT TABLES & SCHEMAS ===")
+            seen_tables = set()
             for domain_name in relevant_domains:
                 if domain_name in self.omop_domains:
                     domain = self.omop_domains[domain_name]
-                    context_parts.append(f"\n{domain_name.upper()} DOMAIN:")
-                    context_parts.append(f"  Primary Table: {self.schema_prefix}.{domain.primary_table}")
                     
-                    # Add detailed schema for primary table
-                    if domain.primary_table in self.omop_tables:
-                        table = self.omop_tables[domain.primary_table]
-                        context_parts.append(f"  Columns:")
-                        for col_name, col_info in table.standard_columns.items():
-                            required = "REQUIRED" if col_info.get("required") else "OPTIONAL"
-                            fk_info = f" -> {col_info['fk_table']}" if col_info.get("fk_table") else ""
-                            context_parts.append(f"    - {col_name} ({col_info['type']}) [{required}]{fk_info}")
-                        
-                        if table.foreign_keys:
-                            context_parts.append(f"  Key Relationships:")
-                            for fk, ref in table.foreign_keys.items():
-                                context_parts.append(f"    - {fk} -> {self.schema_prefix}.{ref}")
-                        
-                        if table.business_rules:
-                            context_parts.append(f"  Business Rules:")
-                            for rule in table.business_rules:
-                                context_parts.append(f"    - {rule}")
-        
-        # 3. Add relevant query templates
-        relevant_templates = self._find_relevant_templates(question, relevant_domains)
+                    # Add primary table for the domain
+                    tables_to_describe = {domain.primary_table}
+                    # Also include related tables
+                    tables_to_describe.update(domain.related_tables)
+                    
+                    for table_name in tables_to_describe:
+                        if table_name not in seen_tables and table_name in self.omop_tables:
+                            table = self.omop_tables[table_name]
+                            context_parts.append(f"\nTABLE: {self.schema_prefix}.{table.name} ({table.domain} Domain)")
+                            context_parts.append(f"  Description: {table.description}")
+                            
+                            # Display actual columns if discovered, otherwise show standard columns
+                            if table.actual_columns:
+                                context_parts.append(f"  Actual Columns (Discovered):")
+                                for col_name, col_type in table.actual_columns.items():
+                                    context_parts.append(f"    - {col_name} ({col_type})")
+                            else:
+                                context_parts.append(f"  Standard Columns (Default):")
+                                for col_name, col_info in table.standard_columns.items():
+                                    fk_info = f" -> FK to {col_info['fk_table']}" if col_info.get("fk_table") else ""
+                                    context_parts.append(f"    - {col_name} ({col_info.get('type', 'UNKNOWN')}){fk_info}")
+                            seen_tables.add(table_name)
+
+        # 3. Add relevant query templates based on extracted concepts/type
+        relevant_templates = self._find_relevant_templates(
+            question, 
+            relevant_domains, 
+            extracted_context.get("concepts", []),
+            extracted_context.get("query_type", "")
+        )
         if relevant_templates:
             context_parts.append("\n=== SUGGESTED QUERY PATTERNS ===")
             for template_name, template in relevant_templates.items():
-                context_parts.append(f"\n{template.name}:")
+                context_parts.append(f"\n-- Pattern: {template.name} --")
                 context_parts.append(f"  Description: {template.description}")
-                context_parts.append(f"  Template:")
+                context_parts.append(f"  SQL Template:")
                 formatted_sql = template.sql_template.format(schema=self.schema_prefix, **{p: f"{{{p}}}" for p in template.parameters})
                 for line in formatted_sql.split('\n'):
                     context_parts.append(f"    {line}")
-        
+
         # 4. Add lessons from failures
         if failed_attempts:
             context_parts.append("\n=== LESSONS FROM PREVIOUS FAILURES ===")
             lessons = self._extract_lessons_from_failures(failed_attempts)
             for lesson in lessons:
                 context_parts.append(f"  - {lesson}")
-        
-        # 5. Add successful patterns
-        if self.successful_queries:
-            context_parts.append("\n=== RECENT SUCCESSFUL QUERIES ===")
-            for query_info in self.successful_queries[-3:]:
-                context_parts.append(f"  ✅ {query_info['sql']}")
-        
-        # 6. Add domain-specific guidance
-        context_parts.append(f"\n=== DOMAIN-SPECIFIC GUIDANCE ===")
-        for domain_name in relevant_domains:
-            if domain_name in self.omop_domains:
-                domain = self.omop_domains[domain_name]
-                context_parts.append(f"\n{domain_name} Domain Best Practices:")
-                for pattern in domain.common_patterns:
-                    context_parts.append(f"  - {pattern}")
         
         return "\n".join(context_parts)
     
@@ -608,20 +633,24 @@ GROUP BY age_group
         
         return relevant_domains
     
-    def _find_relevant_templates(self, question: str, domains: List[str]) -> Dict[str, OMOPQueryTemplate]:
-        """Find query templates relevant to the question and domains"""
+    def _find_relevant_templates(self, question: str, domains: List[str], concepts: List[str], query_type: str) -> Dict[str, OMOPQueryTemplate]:
+        """Finds query templates relevant to the extracted context."""
         relevant = {}
-        
         question_lower = question.lower()
         
         for template_name, template in self.query_templates.items():
-            # Check if template domains overlap with identified domains
+            # Match by domain
             if any(domain in template.domains for domain in domains):
                 relevant[template_name] = template
             
-            # Check for specific patterns in question
-            if "count" in question_lower and "patient" in question_lower and template_name == "count_patients_with_condition":
+            # Match by query type
+            if query_type in template_name:
                 relevant[template_name] = template
+            
+            # Match by concepts
+            for concept in concepts:
+                if concept in template.description or concept in template_name:
+                    relevant[template_name] = template
         
         return relevant
     
@@ -764,6 +793,82 @@ GROUP BY age_group
         # TODO: Implement based on actual MCP result format
         return None
 
+    def update_schema_from_discovery(self, discovered_columns: List[Dict[str, Any]]):
+        """
+        Updates the in-memory OMOP table schemas based on a single, efficient
+        discovery query to the information_schema.
+        """
+        tables_updated = set()
+        for row in discovered_columns:
+            table_name = row.get('table_name')
+            column_name = row.get('column_name')
+            data_type = row.get('data_type')
+
+            if table_name and column_name and table_name in self.omop_tables:
+                # Update the actual_columns dictionary for the table
+                if table_name not in tables_updated:
+                    self.omop_tables[table_name].actual_columns = {} # Clear previous knowledge
+                    tables_updated.add(table_name)
+                
+                if data_type:
+                    self.omop_tables[table_name].actual_columns[column_name] = data_type
+        
+        logger.info(f"World Model schema updated for {len(tables_updated)} tables from database discovery.")
+
+    async def perform_smart_discovery(self, mcp_manager) -> bool:
+        """
+        Performs a single, efficient query to discover the actual schema of key OMOP tables
+        and updates the world model.
+        """
+        core_tables = [
+            'person', 'condition_occurrence', 'drug_exposure', 
+            'measurement', 'observation', 'concept', 'visit_occurrence'
+        ]
+        
+        # DuckDB uses upper-case for information_schema
+        discovery_query = f"""
+        SELECT
+            LOWER(table_name) as table_name,
+            LOWER(column_name) as column_name,
+            data_type
+        FROM information_schema.columns
+        WHERE table_schema = '{self.schema_prefix}'
+          AND table_name IN ({', '.join([f"'{t}'" for t in core_tables])})
+        ORDER BY table_name, column_name;
+        """
+        
+        try:
+            logger.info("Performing smart schema discovery...")
+            result = await mcp_manager.call_tool("omop_db_server:Select_Query", {"query": discovery_query})
+            
+            # The result parsing logic is now in the agent, so we need a simplified check here
+            if result and isinstance(result, dict) and not result.get("isError"):
+                # This part is tricky as the full result parsing is in the agent.
+                # We'll assume a successful query returns a result with a 'result' key
+                # that can be parsed. A more robust solution might involve moving
+                # result parsing to a shared utility.
+                
+                raw_result_str = result.get('result', '{}')
+                parsed_result = json.loads(raw_result_str)
+                content = parsed_result.get('content', [])
+                
+                if content and content[0].get('type') == 'text':
+                    text_data = content[0]['text']
+                    lines = text_data.strip().split('\n')
+                    if len(lines) > 1:
+                        headers = [h.strip() for h in lines[0].split('\t')]
+                        discovered_columns = [dict(zip(headers, line.split('\t'))) for line in lines[1:]]
+                        
+                        self.update_schema_from_discovery(discovered_columns)
+                        return True
+            
+            logger.warning("Smart schema discovery did not return a valid result.")
+            return False
+
+        except Exception as e:
+            logger.error(f"Smart schema discovery failed: {e}", exc_info=True)
+            return False
+
 class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, RequestHandler):
     """
     An intelligent agent that performs text-to-SQL conversion and then calls an 
@@ -789,21 +894,15 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
         await self.mcp_manager.discover_servers()
         print("[OMOPDatabaseAgent] MCP server discovery completed.")
         
-        # Skip expensive schema exploration - use built-in OMOP CDM v5.4 knowledge instead
-        print("[OMOPDatabaseAgent] Using built-in OMOP CDM v5.4 knowledge for fast startup")
+        # Perform a single, efficient discovery of the live database schema
+        print("[OMOPDatabaseAgent] 🧠 Performing smart schema discovery...")
+        success = await self.omop_world_model.perform_smart_discovery(self.mcp_manager)
+        if success:
+            print("[OMOPDatabaseAgent] ✅ World model updated with live schema.")
+        else:
+            print("[OMOPDatabaseAgent] ⚠️ Warning: Could not perform smart discovery. Using default OMOP schema.")
         
-        # Only do minimal validation - check if person table exists
-        try:
-            validation_query = f"SELECT COUNT(*) FROM {self.omop_world_model.schema_prefix}.person LIMIT 1"
-            result = await self.mcp_manager.call_tool("omop_db_server:Select_Query", {"query": validation_query})
-            if self.omop_world_model._is_successful_result(result):
-                print("[OMOPDatabaseAgent] ✅ Database connection validated successfully")
-            else:
-                print("[OMOPDatabaseAgent] ⚠️ Warning: Could not validate database connection")
-        except Exception as e:
-            print(f"[OMOPDatabaseAgent] ⚠️ Warning: Database validation failed: {e}")
-        
-        print("[OMOPDatabaseAgent] 🚀 Fast initialization completed using built-in OMOP knowledge")
+        print("[OMOPDatabaseAgent] 🚀 Fast initialization completed.")
 
     @classmethod
     async def create(cls, agent_id: str, mcp_servers: List[MCPServer], ollama_model: str = "llama3.1:8b"):
@@ -848,80 +947,34 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
             logger.error("[OMOPDatabaseAgent] No natural language query found in mental state.")
             return Action(action_type="error", parameters={"message": "No natural language query to process."})
 
-        # Check if we have previous failed attempts to learn from
+        # Check for previous failed attempts
         failed_attempts = state.memory.get("failed_sql_attempts", [])
         
-        # Step 1: Extract themes and fields from the query using a small Ollama call
+        # Step 1: Extract structured context from the query
+        print("[OMOPDatabaseAgent] 🧠 Step 1/3: Extracting query context...")
         extracted_context = await self._extract_query_context(nl_query)
         
-        # Step 2: Get targeted context from world model based on extracted themes
-        world_model_context = self.omop_world_model.get_comprehensive_context(nl_query, failed_attempts)
+        # Step 2: Get hyper-focused context from the world model
+        print("[OMOPDatabaseAgent] 📚 Step 2/3: Retrieving targeted world model context...")
+        world_model_context = self.omop_world_model.get_comprehensive_context(
+            nl_query, extracted_context, failed_attempts
+        )
         
+        # Step 3: Generate the SQL query
+        print("[OMOPDatabaseAgent]  SQL Step 3/3: Generating SQL query with focused context...")
         if failed_attempts:
-            # This is a refinement attempt - include previous failures in context
-            attempt_number = len(failed_attempts) + 1
-            logger.debug(f"[OMOPDatabaseAgent] Refining SQL query (attempt {attempt_number})")
-            
-            # Build context from previous failures
-            failure_context = "\n\nPREVIOUS FAILED ATTEMPTS:\n"
-            for i, attempt in enumerate(failed_attempts, 1):
-                failure_context += f"Attempt {i}:\n"
-                failure_context += f"SQL: {attempt['sql']}\n"
-                failure_context += f"Error: {attempt['error']}\n\n"
-            
-            failure_context += f"Please generate a corrected SQL query that addresses these errors and successfully answers: \"{nl_query}\""
-            
-            system_prompt = f"""
-You are an expert SQL query generator for OMOP Common Data Model (CDM) v5.4.
-
-CRITICAL: ALL queries MUST start with SELECT for security reasons.
-
-EXTRACTED CONTEXT: {extracted_context}
-
-{world_model_context}
-
-Based on the learned schema and previous failures, generate a corrected SQL query. Pay attention to:
-1. Correct table/schema references from learned schema
-2. Proper column names that actually exist  
-3. Valid SQL syntax
-4. OMOP CDM best practices
-
-Generate ONLY the SQL query, no explanations.
-            """
-            
-            prompt = failure_context
+            # Build a detailed prompt for refinement
+            prompt = self._build_refinement_prompt(nl_query, world_model_context, failed_attempts)
         else:
-            # First attempt - use extracted context for focused generation
-            system_prompt = f"""
-Expert SQL generator for OMOP CDM v5.4 healthcare data.
+            # Build a concise, focused prompt for the first attempt
+            prompt = self._build_initial_prompt(nl_query, world_model_context)
 
-CRITICAL: Start with SELECT only. Use DuckDB syntax.
-
-EXTRACTED CONTEXT: {extracted_context}
-
-KEY RULES:
-1. Always use "base." schema prefix
-2. Use EXTRACT() not date_part() for dates  
-3. Filter standard_concept = 'S' for concepts
-4. Use LOWER() and LIKE for text matching
-5. For age: EXTRACT(YEAR FROM CURRENT_DATE) - year_of_birth
-
-RELEVANT CONTEXT:
-{world_model_context}
-
-Generate ONLY the SQL query, no explanations.
-            """
-            
-        prompt = f"""Convert the following question to an OMOP SQL query: \"{nl_query}\""""
-
-        ollama_response = await self.ollama_reason(prompt, system_prompt=system_prompt, include_tools=False)
+        ollama_response = await self.ollama_reason(prompt["prompt"], system_prompt=prompt["system_prompt"], include_tools=False)
 
         # Extract SQL from response
         sql_query = self._extract_sql_from_response(ollama_response)
-
         logger.debug(f"[OMOPDatabaseAgent] Generated SQL query: {sql_query}")
 
-        # Always try to execute - let MCP server do the validation
         action = Action(
             action_type="call_mcp_tool", 
             parameters={
@@ -931,37 +984,123 @@ Generate ONLY the SQL query, no explanations.
         )
         logger.debug(f"[OMOPDatabaseAgent] Generated action: {action}")
         return action
-    
-    async def _extract_query_context(self, nl_query: str) -> str:
-        """Extract themes, domains, and key concepts from the natural language query using a small Ollama call."""
+
+    def _build_initial_prompt(self, nl_query: str, context: str) -> Dict[str, str]:
+        """Builds a concise and focused prompt for the first attempt."""
+        system_prompt = """
+You are an expert SQL generator for OMOP CDM v5.4 using DuckDB syntax.
+Your goal is to generate a single, valid, and executable SQL query.
+
+CRITICAL RULES:
+1.  **Start with SELECT only.** No WITH clauses, CTEs, or multiple statements.
+2.  **Always use the `base.` schema prefix** for all tables (e.g., `base.person`).
+3.  **Use `EXTRACT()` for dates**, not `date_part()` (e.g., `EXTRACT(YEAR FROM CURRENT_DATE)`).
+4.  **Filter concepts** using `standard_concept = 'S'`.
+5.  **Use `LOWER()` and `LIKE`** for case-insensitive text matching.
+6.  **For age calculations**, use `(EXTRACT(YEAR FROM CURRENT_DATE) - year_of_birth)`.
+
+Use the provided context to write the query. Generate ONLY the SQL query.
+        """.strip()
+        
+        prompt = f"""
+### CONTEXT
+{context}
+
+### QUESTION
+"{nl_query}"
+
+### SQL QUERY
+        """.strip()
+        
+        return {"system_prompt": system_prompt, "prompt": prompt}
+
+    def _build_refinement_prompt(self, nl_query: str, context: str, failed_attempts: List[Dict]) -> Dict[str, str]:
+        """Builds a detailed prompt for refining a failed query."""
+        system_prompt = self._build_initial_prompt(nl_query, context)["system_prompt"]
+        
+        failure_context = "\n\n### PREVIOUS FAILED ATTEMPTS\n"
+        for i, attempt in enumerate(failed_attempts, 1):
+            failure_context += f"Attempt {i} SQL: {attempt['sql']}\n"
+            failure_context += f"Attempt {i} Error: {attempt['error']}\n---\n"
+        
+        prompt = f"""
+### CONTEXT
+{context}
+
+{failure_context}
+
+### INSTRUCTIONS
+Analyze the previous errors and the context to generate a corrected SQL query for the original question. Pay close attention to table and column names, join logic, and function syntax.
+
+### QUESTION
+"{nl_query}"
+
+### CORRECTED SQL QUERY
+        """.strip()
+        
+        return {"system_prompt": system_prompt, "prompt": prompt}
+
+    async def _extract_query_context(self, nl_query: str) -> Dict[str, Any]:
+        """
+        Extracts structured context from the query using an LLM call.
+        Returns a dictionary with domains, concepts, query_type, and tables.
+        """
         extraction_prompt = f"""
-Analyze this medical question and extract key information:
+Analyze this medical question and extract key information in a JSON format:
 
 Question: "{nl_query}"
 
-Extract:
-1. Medical domains (Person/Demographics, Condition, Drug, Measurement, Observation)
-2. Key medical concepts (specific conditions, drugs, measurements)
-3. Query type (count, average, list, distribution)
-4. Required OMOP tables
+Respond with a single JSON object containing these keys:
+- "domains": list of relevant medical domains (e.g., "Condition", "Drug", "Person").
+- "concepts": list of specific medical concepts (e.g., "Essential Hypertension", "metformin").
+- "query_type": a simple category (e.g., "count", "average", "list", "distribution").
+- "tables": list of likely OMOP tables needed (e.g., "condition_occurrence", "drug_exposure").
 
-Respond in this format:
-DOMAINS: [list]
-CONCEPTS: [list] 
-TYPE: [query type]
-TABLES: [list]
+Example for "What is the most common disease?":
+{{
+  "domains": ["Condition"],
+  "concepts": ["disease"],
+  "query_type": "list",
+  "tables": ["condition_occurrence", "concept"]
+}}
+
+Example for "Average age of female patients?":
+{{
+  "domains": ["Person"],
+  "concepts": ["age", "female"],
+  "query_type": "average",
+  "tables": ["person", "concept"]
+}}
+
+Your JSON response:
         """
         
-        system_prompt = "You are an OMOP CDM expert. Extract key information from medical questions concisely."
+        system_prompt = "You are an OMOP CDM expert. Extract key information from medical questions and respond ONLY with a valid JSON object."
         
+        default_context = {
+            "domains": [], "concepts": [nl_query], "query_type": "unknown", "tables": []
+        }
+
         try:
             response = await self.ollama_reason(extraction_prompt, system_prompt=system_prompt, include_tools=False)
-            extracted = self._extract_sql_from_response(response)  # Reuse the response extraction logic
-            logger.debug(f"[OMOPDatabaseAgent] Extracted context: {extracted}")
-            return extracted
+            response_text = self._extract_sql_from_response(response)  # Reusing this to get the core text
+            
+            # Find the JSON object in the response text
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                extracted_json = json_match.group(0)
+                parsed_context = json.loads(extracted_json)
+                logger.debug(f"[OMOPDatabaseAgent] Extracted structured context: {parsed_context}")
+                return parsed_context
+            else:
+                logger.warning("[OMOPDatabaseAgent] No JSON object found in context extraction response.")
+                return default_context
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(f"[OMOPDatabaseAgent] Context extraction failed to parse JSON: {e}")
+            return default_context
         except Exception as e:
-            logger.warning(f"[OMOPDatabaseAgent] Context extraction failed: {e}")
-            return f"Query about: {nl_query}"
+            logger.error(f"[OMOPDatabaseAgent] An unexpected error occurred during context extraction: {e}")
+            return default_context
 
     def _extract_sql_from_response(self, ollama_response: Any) -> str:
         """Extract SQL query from Ollama response."""
@@ -1036,7 +1175,7 @@ TABLES: [list]
                     })
                     
                     # Check if we should try again or give up
-                    max_attempts = 10
+                    max_attempts = 5 # Reduced from 10 for better interactive performance
                     if len(self.mental_state.memory.get("failed_sql_attempts", [])) >= max_attempts:
                         logger.error(f"[OMOPDatabaseAgent] Max attempts ({max_attempts}) reached")
                         return ActionResult(success=False, error=f"Failed to generate valid SQL after {max_attempts} attempts. Last error: {error_message}")

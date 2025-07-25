@@ -2,6 +2,7 @@ Metadata-Version: 2.4
 Name: med_a2a_omop
 Version: 0.1.0
 Summary: A multi-agent framework for medical Q&A on OMOP data.
+License-File: LICENSE
 Requires-Dist: python-dotenv
 Requires-Dist: uvicorn[standard]
 Requires-Dist: fastapi
@@ -10,3 +11,4 @@ Requires-Dist: a2a-medical-foundation@ git+https://github.com/fastomop/omcp_a2a.
 Requires-Dist: httpx>=0.28.1
 Requires-Dist: fastmcp
 Requires-Dist: mcp>=1.12.1
+Dynamic: license-file
