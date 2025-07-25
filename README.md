@@ -35,7 +35,7 @@ Transform complex medical questions into precise SQL queries using advanced AI a
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/fastomop/medA2A_implementation.git
 cd medA2A_implementation
 
 # Install dependencies using uv (recommended)
