@@ -74,29 +74,47 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
         )
         self.omop_agent_client = omop_agent_client
         self.add_client("omop_database_agent", omop_agent_client)
-        self.user_question = ""
-        self.final_result = None
 
     async def perceive(self, observation: Any) -> ProcessedObservation:
+        """Processes incoming data and identifies its source."""
+        source = "unknown"
+        data = observation
         if isinstance(observation, str):
-            self.user_question = observation
+            source = "user_question"
         elif isinstance(observation, dict) and "generated_sql" in observation and "query_result" in observation:
-            # This is the response from the OMOPDatabaseAgent
-            self.final_result = OMOPQueryResponse(**observation)
-        return ProcessedObservation(data=observation, timestamp=0, source="user_input")
+            source = "omop_agent_response"
+            data = OMOPQueryResponse(**observation)
+        return ProcessedObservation(data=data, timestamp=0, source=source)
 
     async def learn(self, state: MentalState, observation: ProcessedObservation) -> MentalState:
-        if self.user_question:
-            state.memory["user_question"] = self.user_question
-        if self.final_result:
-            state.memory["final_result"] = self.final_result
+        """Updates the mental state based on the perceived observation."""
+        if observation.source == "user_question":
+            state.memory["user_question"] = observation.data
+            # Clear any previous result when a new question comes in
+            if "final_result" in state.memory:
+                del state.memory["final_result"]
+            if "result_for_question" in state.memory:
+                del state.memory["result_for_question"]
+        elif observation.source == "omop_agent_response":
+            state.memory["final_result"] = observation.data
+            # Track which question this result is for
+            state.memory["result_for_question"] = state.memory.get("user_question")
         return state
 
     async def reason(self, state: MentalState) -> Action:
         user_question = state.memory.get("user_question")
         final_result = state.memory.get("final_result")
+        result_for_question = state.memory.get("result_for_question")
 
-        if user_question and not final_result:
+        # Check if we have a result for the current question
+        has_result_for_current_question = (
+            final_result and 
+            result_for_question and 
+            user_question and 
+            result_for_question == user_question
+        )
+
+        if user_question and not has_result_for_current_question:
             print("[Orchestrator] Decided to delegate to OMOP Agent.")
             request_data = OMOPQueryRequest(question=user_question)
             return Action(
@@ -104,13 +122,22 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
                 parameters=request_data.model_dump()
             )
 
-        elif final_result:
+        elif has_result_for_current_question:
             system_prompt = "You are a helpful medical assistant. Summarize the following data from a database query into a clear, human-readable answer."
-            prompt = f"The user asked: '{user_question}'. The data is: {json.dumps(final_result.model_dump())}"
+            prompt = f"The user asked: '{user_question}'. The data is: {json.dumps(final_result.model_dump() if final_result else {})}"
             
             print("[Orchestrator] Decided to summarize the final result.")
             ollama_response = await self.ollama_reason(prompt, system_prompt=system_prompt)
-            summary = ollama_response.get('message', {}).get('content', 'No summary available.')
+            
+            # Extract summary from Ollama response (handle different response formats)
+            summary = self._extract_summary_from_response(ollama_response)
+            
+            # Clear the result after summarization to prepare for next question
+            if "final_result" in state.memory:
+                del state.memory["final_result"]
+            if "result_for_question" in state.memory:
+                del state.memory["result_for_question"]
+            
             return Action(action_type="final_answer", parameters={"summary": summary})
 
         return Action(action_type="no_action", parameters={})
@@ -153,8 +180,6 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
                 else:
                     omop_response = OMOPQueryResponse(**response_data)
                 
-                # Update our own state with the result
-                self.final_result = omop_response
                 return ActionResult(success=True, data=omop_response.model_dump())
 
             except Exception as e:
@@ -177,4 +202,31 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
             url=f"http://localhost:8001/{self.agent_id}", # Mock URL
             capabilities=AgentCapabilities(streaming=False),
             skills=[],
+            default_input_modes=[],
+            default_output_modes=[],
         )
+
+    def _extract_summary_from_response(self, ollama_response: Any) -> str:
+        """Extract summary from Ollama response, handling different response formats."""
+        summary = ""
+        if isinstance(ollama_response, dict):
+            if 'response' in ollama_response:
+                summary = ollama_response['response']
+            elif 'message' in ollama_response and isinstance(ollama_response['message'], dict):
+                summary = ollama_response['message'].get('content', '')
+            elif 'message' in ollama_response:
+                summary = str(ollama_response['message'])
+            elif 'content' in ollama_response:
+                summary = ollama_response['content']
+            else:
+                summary = str(ollama_response)
+        else:
+            summary = str(ollama_response)
+        
+        summary = summary.strip()
+        
+        # Fallback if still empty
+        if not summary:
+            summary = "No summary available."
+            
+        return summary

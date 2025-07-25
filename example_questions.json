@@ -1,0 +1,12 @@
+{
+  "questions": [
+    "How many patients have hypertension?",
+    "What is the average age of patients with diabetes?",
+    "How many patients are taking metformin?",
+    "What are the most common conditions in the database?",
+    "How many patients have both diabetes and hypertension?",
+    "What is the gender distribution of patients with heart disease?",
+    "How many lab tests were performed last year?",
+    "What medications are prescribed most frequently?"
+  ]
+} 
