@@ -1190,20 +1190,20 @@ Your JSON response:
                     actual_result = self._parse_successful_result(result)
                     logger.debug(f"[OMOPDatabaseAgent] Parsed successful result: {actual_result}")
 
-                    response_data = OMOPQueryResponse(
-                        generated_sql=tool_params.get("query", ""),
-                        query_result=actual_result if isinstance(actual_result, list) else []
-                    )
+                response_data = OMOPQueryResponse(
+                    generated_sql=tool_params.get("query", ""),
+                    query_result=actual_result if isinstance(actual_result, list) else []
+                )
+                
+                # Clear failed attempts on success
+                if "failed_sql_attempts" in self.mental_state.memory:
+                    del self.mental_state.memory["failed_sql_attempts"]
                     
-                    # Clear failed attempts on success
-                    if "failed_sql_attempts" in self.mental_state.memory:
-                        del self.mental_state.memory["failed_sql_attempts"]
+                # Learn from the successful query result
+                self.omop_world_model.learn_from_query_execution(tool_params.get("query", ""), actual_result, True)
                     
-                    # Learn from the successful query result
-                    self.omop_world_model.learn_from_query_execution(tool_params.get("query", ""), actual_result, True)
-                    
-                    logger.info(f"[OMOPDatabaseAgent] Successfully executed SQL query")
-                    return ActionResult(success=True, data=response_data.model_dump())
+                logger.info(f"[OMOPDatabaseAgent] Successfully executed SQL query")
+                return ActionResult(success=True, data=response_data.model_dump())
                     
             except Exception as e:
                 logger.error(f"[OMOPDatabaseAgent] MCP Tool call failed: {e}", exc_info=True)

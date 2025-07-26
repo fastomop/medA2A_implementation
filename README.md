@@ -47,6 +47,19 @@ uv pip install -e .
 pip install -e .
 ```
 
+### Configuration
+
+```bash
+# Create configuration file
+cp .medA2A.config.sample.json .medA2A.config.json
+
+# Edit the configuration file to set your OMCP server path
+# Example: "omcp_server_path": "/path/to/your/omcp_server"
+
+# Validate your configuration
+med-a2a-setup --check
+```
+
 ### Basic Usage
 
 ```bash
@@ -223,23 +236,44 @@ The system includes a comprehensive world model with:
 
 ## 🔧 **Configuration**
 
+### Configuration Files
+
+The system uses a JSON configuration file for explicit path management:
+
+```json
+{
+  "paths": {
+    "omcp_server_path": "/path/to/omcp_server"
+  },
+  "services": {
+    "ollama_url": "http://localhost:11434",
+    "ollama_model": "llama3.1:8b"  
+  }
+}
+```
+
+**Setup options:**
+- Copy sample: `cp .medA2A.config.sample.json .medA2A.config.json`
+- Generate template: `med-a2a-setup --generate-config`
+
 ### Environment Variables
-Create a `.env` file in the project root:
+
+Alternative configuration via environment variables:
 
 ```bash
-# OMOP Agent Configuration
-OMOP_AGENT_URL=http://localhost:8002
+# Required
+export OMCP_SERVER_PATH=/path/to/omcp_server
 
-# Database Configuration (handled by MCP server)
-DB_TYPE=duckdb
-DB_PATH=/path/to/your/omop/database.duckdb
-CDM_SCHEMA=base
-VOCAB_SCHEMA=base
+# Optional services
+export OLLAMA_URL=http://localhost:11434
+export OLLAMA_MODEL=llama3.1:8b
 
-# Ollama Configuration
-OLLAMA_MODEL=llama3.1:8b
-OLLAMA_URL=http://localhost:11434
+# Optional agent configuration  
+export OMOP_AGENT_HOST=127.0.0.1
+export OMOP_AGENT_PORT=8002
 ```
+
+**Note:** The OMCP server handles its own database configuration independently.
 
 ### Dependencies
 Key dependencies are managed in `pyproject.toml`:

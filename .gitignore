@@ -31,6 +31,11 @@ ENV/
 env.bak/
 venv.bak/
 
+# Configuration files (user-specific)
+.medA2A.config.json
+config.json
+*.local.json
+
 # IDE
 .vscode/
 .idea/
@@ -95,4 +100,7 @@ dmypy.json
 
 # Project specific
 run_simple.sh
-demo_all_modes.py 
+demo_all_modes.py
+
+# Auto-generated scripts with user-specific paths
+scripts/ 

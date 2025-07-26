@@ -19,7 +19,9 @@ dependencies = [
 ]
 
 [project.scripts]
-# This creates a command-line executable named 'run-med-a2a'
-# that will call the 'main' function in our 'runner' module.
+# Main application entry point
 run-med-a2a = "med_a2a_omop.runner:main"
+
+# Setup and validation tool
+med-a2a-setup = "med_a2a_omop.setup:main"
 

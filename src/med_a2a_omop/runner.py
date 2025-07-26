@@ -15,15 +15,20 @@ import httpx
 
 from a2a.client import A2AClient
 from med_a2a_omop.agents.orchestrator_agent import OrchestratorAgent
+from a2a_medical.base.agent import ActionResult
 
 # Keep the original ApplicationWrapper for backward compatibility
 class ApplicationWrapper:
     """Manages the lifecycle of our multi-agent application with proper cleanup."""
-
+    
     def __init__(self):
+        # Import config here to avoid circular imports
+        from .config import get_config
+        self.config = get_config()
+        
         load_dotenv()
-        self.omop_agent_process = None
         self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.omop_agent_process = None
         self._shutdown_requested = False
         
         # Register cleanup on exit
@@ -105,10 +110,16 @@ class ApplicationWrapper:
         # The command now directly uses the installed script for the OMOP agent runner
         command = [sys.executable, "-m", "med_a2a_omop.run_omop_agent"]
         
+        # Set up environment to pass config file location
+        env = os.environ.copy()
+        if self.config.config_file:
+            env['MEDA2A_CONFIG_FILE'] = str(self.config.config_file)
+        
         print("🚀 Starting background OMOP Agent server...")
         self.omop_agent_process = subprocess.Popen(
             command,
             cwd=self.project_root,
+            env=env,  # Pass the environment with config file path
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, # Redirect stderr to stdout
             text=True,  # Decode stdout/stderr as text
@@ -195,12 +206,30 @@ class MedA2AInterface(ApplicationWrapper):
     
     def __init__(self):
         super().__init__()
+        
         self.orchestrator = None
         self.omop_client = None
         
     async def initialize(self):
         """Initialize the system and start background services."""
         print("🚀 Initializing Medical A2A OMOP System...")
+        
+        # Validate environment before starting
+        issues = self.config.validate_setup()
+        if issues:
+            print("❌ Environment validation failed:")
+            for issue in issues:
+                print(f"   • {issue}")
+            
+            print("\n📋 Setup Instructions:")
+            instructions = self.config.get_setup_instructions()
+            for instruction in instructions:
+                print(instruction)
+                print()
+            
+            raise RuntimeError("Environment not properly configured. Please follow setup instructions above.")
+        
+        print("✅ Environment validation passed")
         
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
@@ -213,31 +242,24 @@ class MedA2AInterface(ApplicationWrapper):
         await self.start_background_services()
         
         # Initialize orchestrator
-        omop_agent_base_url = os.getenv("OMOP_AGENT_URL", "http://localhost:8002")
-        if not omop_agent_base_url.endswith("/rpc"):
-            omop_agent_url = f"{omop_agent_base_url.rstrip('/')}/rpc"
-        else:
-            omop_agent_url = omop_agent_base_url
+        omop_agent_config = self.config.get_omop_agent_config()
+        omop_agent_url = f"{omop_agent_config['url'].rstrip('/')}/rpc"
 
         print(f"[DEBUG] Connecting to OMOP Agent at: {omop_agent_url}")
         self.omop_client = A2AClient(httpx_client=httpx.AsyncClient(timeout=60.0), url=omop_agent_url)
         
         self.orchestrator = OrchestratorAgent(
             agent_id="orchestrator-01",
-            omop_agent_client=self.omop_client
+            omop_agent_client=self.omop_client,
+            ollama_model=self.config.get_ollama_model()
         )
         
         print("✅ System initialized successfully!")
     
     async def ask_single_question(self, question: str) -> Dict[str, Any]:
         """
-        Process a single question and return the result.
-        
-        Args:
-            question: Natural language medical question
-            
-        Returns:
-            Dictionary with query result, SQL, and metadata
+        Processes a single question by delegating entirely to the orchestrator agent's
+        internal control loop.
         """
         if not self.orchestrator:
             raise RuntimeError("System not initialized. Call initialize() first.")
@@ -245,50 +267,36 @@ class MedA2AInterface(ApplicationWrapper):
         print(f"\n--- ❓ Processing Question: {question} ---")
         
         try:
-            # Run orchestrator workflow
-            observation1 = await self.orchestrator.perceive(question)
-            state1 = await self.orchestrator.learn(self.orchestrator.mental_state, observation1)
-            action1 = await self.orchestrator.reason(state1)
-            
-            result1 = await self.orchestrator.execute(action1)
-            print(f"[Orchestrator] Received response from OMOP Agent.")
+            # Delegate the entire process to the agent's control loop
+            final_result = await self.orchestrator.process_query(question)
 
-            observation2 = await self.orchestrator.perceive(result1.data)
-            state2 = await self.orchestrator.learn(self.orchestrator.mental_state, observation2)
-            action2 = await self.orchestrator.reason(state2)
-
-            final_result = await self.orchestrator.execute(action2)
-            
-            # Format result
-            result_data = {
-                "question": question,
-                "success": final_result.success,
-                "timestamp": time.time()
-            }
-            
-            if final_result.success and final_result.data:
-                if isinstance(final_result.data, dict):
-                    result_data.update(final_result.data)
-                    if 'summary' in final_result.data:
-                        result_data["answer"] = final_result.data['summary']
-                    else:
-                        result_data["answer"] = f"Query executed successfully. Result: {final_result.data}"
-                else:
-                    result_data["answer"] = str(final_result.data)
-            else:
-                result_data["error"] = final_result.error if hasattr(final_result, 'error') else 'Unknown error'
-                result_data["answer"] = f"An error occurred: {result_data['error']}"
-            
-            return result_data
+            # Format and return the final result
+            return self._format_final_result(question, final_result)
             
         except Exception as e:
-            return {
-                "question": question,
-                "success": False,
-                "error": str(e),
-                "answer": f"An error occurred: {str(e)}",
-                "timestamp": time.time()
-            }
+            import traceback
+            traceback.print_exc()
+            return self._format_final_result(question, ActionResult(success=False, error=str(e)))
+
+    def _format_final_result(self, question: str, final_result: ActionResult) -> Dict[str, Any]:
+        """Formats the final ActionResult into a consistent dictionary."""
+        result_data = {
+            "question": question,
+            "success": final_result.success,
+            "timestamp": time.time()
+        }
+        
+        if final_result.success and final_result.data:
+            if isinstance(final_result.data, dict):
+                result_data.update(final_result.data)
+                result_data["answer"] = final_result.data.get('summary', str(final_result.data))
+            else:
+                result_data["answer"] = str(final_result.data)
+        else:
+            result_data["error"] = final_result.error if hasattr(final_result, 'error') else 'Unknown error'
+            result_data["answer"] = f"An error occurred: {result_data['error']}"
+        
+        return result_data
     
     async def ask_multiple_questions(self, questions: List[str]) -> List[Dict[str, Any]]:
         """

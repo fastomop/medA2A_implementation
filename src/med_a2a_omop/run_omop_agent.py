@@ -10,47 +10,77 @@ from a2a.server.request_handlers.jsonrpc_handler import JSONRPCHandler
 
 from .agents.omop_database_agent import OMOPDatabaseAgent
 from a2a_medical.integrations.mcp_official import MCPServer
+from .config import get_config
 
 async def main():
     load_dotenv()
-
-    # Configure MCP server with explicit stdio transport for OMCP server
-    # Note: We explicitly use stdio transport here instead of MCP_SERVER_URL env var
-    # because the OMOP server runs as a subprocess, not an HTTP server
-    # We use a Python wrapper script to call 'uv run' with proper dependencies
-    wrapper_script = "/Users/k24118093/Documents/medA2A_implementation/omcp_wrapper.py"
-    mcp_server_url = f"stdio://{wrapper_script}"
     
-    # Create MCP server configuration with subprocess settings
-    mcp_servers = [MCPServer(
-        name="omop_db_server",
-        url=mcp_server_url,
-        description="Provides OMOP CDM database access via MCP",
-        medical_speciality="omop_cdm",
-        working_dir="/Users/k24118093/Documents/omcp_server",
-        env={
-            "DB_TYPE": "duckdb",
-            "DB_PATH": "/Users/k24118093/Documents/omcp_server/synthetic_data/synthea.duckdb",
-            "CDM_SCHEMA": "base",
-            "VOCAB_SCHEMA": "base"
-        }
-    )]
+    # Get configuration instance
+    config = get_config()
+    
+    # Validate environment before starting
+    issues = config.validate_setup()
+    if issues:
+        print("❌ Configuration issues found:")
+        for issue in issues:
+            print(f"   • {issue}")
+        
+        print("\n📋 Setup instructions:")
+        instructions = config.get_setup_instructions()
+        for instruction in instructions:
+            print(instruction)
+            print()
+        
+        print("Please resolve these issues and try again.")
+        return
+    
+    # Create wrapper script if needed
+    wrapper_script = config.create_wrapper_script()
+    print(f"📜 Created OMCP wrapper script: {wrapper_script}")
 
+    # Get MCP server configuration
+    try:
+        mcp_config = config.get_mcp_server_config()
+        mcp_servers = [MCPServer(
+            name=mcp_config["name"],
+            url=mcp_config["url"],
+            description=mcp_config["description"],
+            medical_speciality=mcp_config["medical_speciality"],
+            working_dir=mcp_config["working_dir"],
+            env=mcp_config["env"]
+        )]
+        
+        print(f"🏥 OMCP Server: {mcp_config['working_dir']}")
+        print(f"🔧 Using UV: {mcp_config['env']['UV_EXECUTABLE']}")
+        print(f"📄 Schemas: CDM={mcp_config['env']['CDM_SCHEMA']}, VOCAB={mcp_config['env']['VOCAB_SCHEMA']}")
+        
+    except RuntimeError as e:
+        print(f"❌ Configuration error: {e}")
+        return
+
+    # Create OMOP agent
     omop_agent = await OMOPDatabaseAgent.create(
         agent_id="omop-db-agent-01",
-        mcp_servers=mcp_servers
+        mcp_servers=mcp_servers,
+        ollama_model=config.get_ollama_model()
     )
 
+    # Build agent card and application
     agent_card = omop_agent.build_agent_card()
-
     app_instance = A2AStarletteApplication(agent_card=agent_card, http_handler=omop_agent)
-
     app = app_instance.build(agent_card_url="/.well-known/agent-card.json", rpc_url="/rpc")
 
-    config = uvicorn.Config(app, host=os.getenv("OMOP_AGENT_HOST", "127.0.0.1"), port=int(os.getenv("OMOP_AGENT_PORT", "8002")))
-    server = uvicorn.Server(config)
+    # Get server configuration
+    server_config = config.get_omop_agent_config()
     
-    print(f"🚀 Starting OMOP Database Agent server at http://{config.host}:{config.port}")
+    print(f"🚀 Starting OMOP Agent server on {server_config['host']}:{server_config['port']}")
+    
+    config = uvicorn.Config(
+        app, 
+        host=server_config['host'], 
+        port=server_config['port']
+    )
+    server = uvicorn.Server(config)
     await server.serve()
 
 if __name__ == "__main__":

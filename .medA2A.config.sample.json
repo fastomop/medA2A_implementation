@@ -1,0 +1,31 @@
+{
+  "_comment": "Medical A2A OMOP Sample Configuration File",
+  "_description": "Copy this file to .medA2A.config.json and edit the paths to match your system.",
+  "_instructions": [
+    "1. Copy this file: cp .medA2A.config.sample.json .medA2A.config.json",
+    "2. Edit .medA2A.config.json to set 'omcp_server_path' to your OMCP server directory",
+    "3. Optionally customize other settings below",
+    "4. Run 'med-a2a-setup --check' to validate your configuration"
+  ],
+  "paths": {
+    "_comment": "REQUIRED: Set these paths to match your system",
+    "omcp_server_path": "/path/to/your/omcp_server",
+    "uv_executable": "uv"
+  },
+  "services": {
+    "_comment": "Optional: Customize service URLs if different from defaults",
+    "ollama_url": "http://localhost:11434",
+    "ollama_model": "llama3.1:8b"
+  },
+  "agent_config": {
+    "_comment": "Optional: Agent server configuration",
+    "omop_agent_host": "127.0.0.1",
+    "omop_agent_port": 8002
+  },
+  "database": {
+    "_comment": "Optional: Database configuration",
+    "db_type": "duckdb",
+    "cdm_schema": "base",
+    "vocab_schema": "base"
+  }
+} 
