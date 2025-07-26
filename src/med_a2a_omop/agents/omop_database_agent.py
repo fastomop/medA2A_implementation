@@ -16,6 +16,7 @@ from a2a.server.request_handlers.request_handler import RequestHandler
 from a2a.server.context import ServerCallContext
 
 from ..models.a2a_messages import OMOPQueryRequest, OMOPQueryResponse
+from ..prompts import get_prompt
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -987,20 +988,7 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
 
     def _build_initial_prompt(self, nl_query: str, context: str) -> Dict[str, str]:
         """Builds a concise and focused prompt for the first attempt."""
-        system_prompt = """
-You are an expert SQL generator for OMOP CDM v5.4 using DuckDB syntax.
-Your goal is to generate a single, valid, and executable SQL query.
-
-CRITICAL RULES:
-1.  **Start with SELECT only.** No WITH clauses, CTEs, or multiple statements.
-2.  **Always use the `base.` schema prefix** for all tables (e.g., `base.person`).
-3.  **Use `EXTRACT()` for dates**, not `date_part()` (e.g., `EXTRACT(YEAR FROM CURRENT_DATE)`).
-4.  **Filter concepts** using `standard_concept = 'S'`.
-5.  **Use `LOWER()` and `LIKE`** for case-insensitive text matching.
-6.  **For age calculations**, use `(EXTRACT(YEAR FROM CURRENT_DATE) - year_of_birth)`.
-
-Use the provided context to write the query. Generate ONLY the SQL query.
-        """.strip()
+        system_prompt = get_prompt("omop_database", "sql_generator")
         
         prompt = f"""
 ### CONTEXT
@@ -1016,7 +1004,7 @@ Use the provided context to write the query. Generate ONLY the SQL query.
 
     def _build_refinement_prompt(self, nl_query: str, context: str, failed_attempts: List[Dict]) -> Dict[str, str]:
         """Builds a detailed prompt for refining a failed query."""
-        system_prompt = self._build_initial_prompt(nl_query, context)["system_prompt"]
+        system_prompt = get_prompt("omop_database", "sql_refiner")
         
         failure_context = "\n\n### PREVIOUS FAILED ATTEMPTS\n"
         for i, attempt in enumerate(failed_attempts, 1):
@@ -1075,7 +1063,7 @@ Example for "Average age of female patients?":
 Your JSON response:
         """
         
-        system_prompt = "You are an OMOP CDM expert. Extract key information from medical questions and respond ONLY with a valid JSON object."
+        system_prompt = get_prompt("omop_database", "context_extractor")
         
         default_context = {
             "domains": [], "concepts": [nl_query], "query_type": "unknown", "tables": []

@@ -33,6 +33,7 @@ venv.bak/
 
 # Configuration files (user-specific)
 .medA2A.config.json
+.medA2A.prompts.json
 config.json
 *.local.json
 

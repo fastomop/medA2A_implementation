@@ -5,13 +5,13 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from a2a.types import AgentCard, AgentCapabilities
-
 from a2a.client import A2AClient
 from a2a.types import Message, TextPart, Role, SendMessageSuccessResponse, JSONRPCErrorResponse
 from a2a_medical.base.agent import MedicalAgent, ProcessedObservation, Action, ActionResult, MentalState, WorldModel
 from a2a_medical.integrations.ollama import OllamaReasoningMixin
 
 from ..models.a2a_messages import OMOPQueryRequest, OMOPQueryResponse
+from ..prompts import get_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -163,101 +163,7 @@ class OrchestratorAgent(OllamaReasoningMixin, MedicalAgent):
 
     async def _generate_plan(self, user_question: str) -> Action:
         """Generates a multi-step plan to answer a complex query."""
-        system_prompt = """
-You are a master medical research planner. Your task is to break down a complex user question into a series of simple, sequential sub-questions. Each sub-question must be answerable with a single, straightforward SQL query.
-
-**CRITICAL RULES for Plan Generation:**
-1.  **SIMPLE, FACTUAL QUESTIONS ONLY:** Every step MUST be a simple data retrieval question (e.g., "Count...", "Find...", "List...").
-2.  **NO CALCULATIONS OR COMPARISONS:** Do NOT create steps that require math, percentages, or comparing results from other steps. The final synthesis step will handle all calculations.
-3.  **BE EFFICIENT:** Do NOT create steps that ask for large amounts of raw data. Be specific.
-4.  **PREFER COUNTS OVER LISTS:** Use "Count patients with X" instead of "List all patients with X" whenever possible.
-5.  **AVOID EXPENSIVE OPERATIONS:** Do NOT ask for "all unique values", "complete lists", or queries that would return hundreds of rows.
-
----
-**GOOD vs. BAD Plan Examples:**
-
-**User Question:** "Compare hypertension in males vs females over 40"
-**GOOD Plan:**
-```json
-[
-    "Count male patients over 40",
-    "Count male patients over 40 with hypertension",
-    "Count female patients over 40",
-    "Count female patients over 40 with hypertension"
-]
-```
-*WHY IT'S GOOD: Each step is a simple count. The final comparison will be done later.*
-
-**BAD Plan:**
-```json
-[
-    "Calculate prevalence of hypertension in males over 40",
-    "Calculate prevalence of hypertension in females over 40"
-]
-```
-*WHY IT'S BAD: "Calculate prevalence" is a complex operation, not a simple data retrieval.*
-
----
-**User Question:** "What medications are prescribed to diabetic patients?"
-**GOOD Plan:**
-```json
-[
-    "Count patients with diabetes",
-    "Count most common medications prescribed to diabetic patients"
-]
-```
-*WHY IT'S GOOD: Focuses on counts and aggregates, not exhaustive lists.*
-
-**BAD Plan:**
-```json
-[
-    "List all medications prescribed to diabetic patients",
-    "List all diabetic patients and their medications"
-]
-```
-*WHY IT'S BAD: "List all" operations are expensive and can timeout.*
-
----
-**User Question:** "What is the rarest condition?"
-**GOOD Plan:**
-```json
-[
-    "Find the condition with the lowest patient count"
-]
-```
-*WHY IT'S GOOD: Directly asks for the minimum, not a full list to sort through.*
-
-**BAD Plan:**
-```json
-[
-    "List all unique conditions found in patient records",
-    "Count patients for each condition"
-]
-```
-*WHY IT'S BAD: "List all unique conditions" is extremely expensive and will timeout.*
-
----
-**User Question:** "How old is the youngest patient?"
-**GOOD Plan:**
-```json
-[
-    "Find the minimum age of all patients"
-]
-```
-*WHY IT'S GOOD: Specific, efficient, directly answers the question.*
-
-**BAD Plan:**
-```json
-[
-    "Get all patient records"
-]
-```
-*WHY IT'S BAD: Inefficient. Fetches unnecessary data and will time out. It is also unspecific and unethical to ask for all patient records. Your task is to be specific and ethical.*
-
----
-
-**Now, generate a plan for the user's question below. Respond ONLY with a JSON list of strings inside a `json` markdown block.**
-        """.strip()
+        system_prompt = get_prompt("orchestrator", "planner")
         
         prompt = f"User Question: \"{user_question}\""
         
@@ -273,6 +179,10 @@ You are a master medical research planner. Your task is to break down a complex 
 
             if json_match:
                 plan_str = json_match.group(1)
+                # Clean up common JSON formatting issues
+                plan_str = re.sub(r',\s*]', ']', plan_str)  # Remove trailing commas
+                plan_str = re.sub(r',\s*}', '}', plan_str)  # Remove trailing commas in objects
+                
                 plan = json.loads(plan_str)
                 if isinstance(plan, list) and all(isinstance(step, str) for step in plan):
                     if isinstance(self.world_model, OrchestratorWorldModel):
@@ -287,18 +197,7 @@ You are a master medical research planner. Your task is to break down a complex 
 
     async def _synthesize_answer(self, original_query: str, executed_steps: List[Dict]) -> Action:
         """Synthesizes a final answer from the results of the executed plan."""
-        system_prompt = """
-You are a helpful and highly knowledgeable Clinical Data Analyst.
-Your role is to synthesize the results from a series of sub-queries into a final, comprehensive answer for a clinical user.
-
-**CRITICAL INSTRUCTIONS:**
-1.  **Address the Original Question:** Your primary goal is to answer the user's original, complex question.
-2.  **Use All the Data:** Incorporate the results from all the executed steps in your summary.
-3.  **Show Your Work:** Briefly mention the results of the sub-questions to build a logical narrative.
-4.  **Perform Final Calculations:** If the final step requires calculations (e.g., percentages, comparisons), do them.
-5.  **Use Clear Formatting:** Use Markdown (bolding, bullet points) for readability.
-6.  **Acknowledge Limitations:** If any sub-step failed or returned no data, mention this and how it impacts the final answer.
-        """.strip()
+        system_prompt = get_prompt("orchestrator", "synthesizer")
 
         # Format the executed steps for the prompt
         context = f"Original Question: \"{original_query}\"\n\n"

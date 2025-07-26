@@ -200,6 +200,28 @@ run-med-a2a -q "What is the most common condition?"
 run-med-a2a -q "Compare diabetes prevalence between male and female patients"
 ```
 
+## 🎯 Advanced Customization
+
+### System Prompts Customization
+
+You can customize the AI system prompts used by different agents:
+
+```bash
+# Generate sample prompts configuration
+med-a2a-setup --generate-prompts
+
+# Copy and customize
+cp .medA2A.prompts.sample.json .medA2A.prompts.json
+
+# Edit the prompts to match your requirements
+# Then set environment variable to use custom prompts
+export PROMPTS_CONFIG_FILE=.medA2A.prompts.json
+```
+
+**Available prompts:**
+- **Orchestrator**: `planner` (query planning), `synthesizer` (result analysis)  
+- **OMOP Database**: `sql_generator` (SQL creation), `sql_refiner` (error fixing), `context_extractor` (query analysis)
+
 ---
 
 🎯 **Key Points:**

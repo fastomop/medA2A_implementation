@@ -87,6 +87,18 @@ Examples:
         help='Show where each configuration value is coming from'
     )
     
+    parser.add_argument(
+        '--generate-prompts',
+        action='store_true',
+        help='Generate a sample prompts configuration file'
+    )
+    
+    parser.add_argument(
+        '--prompts-file',
+        default='.medA2A.prompts.sample.json',
+        help='Path to prompts configuration file (default: .medA2A.prompts.sample.json)'
+    )
+    
     args = parser.parse_args()
     
     # Import here to avoid issues if dependencies aren't installed yet
@@ -111,6 +123,9 @@ Examples:
     
     if args.show_sources:
         show_configuration_sources(config)
+    
+    if args.generate_prompts:
+        generate_prompts_config(args.prompts_file)
     
     if args.help_setup:
         show_setup_instructions(config)
@@ -219,6 +234,20 @@ def generate_json_config(config, config_file):
         print(f"   Edit this file and it will take priority over environment variables and auto-discovery.")
     except Exception as e:
         print(f"❌ Failed to generate configuration file: {e}")
+
+def generate_prompts_config(prompts_file):
+    """Generate a sample prompts configuration file."""
+    print(f"📝 Generating prompts configuration file: {prompts_file}")
+    
+    try:
+        from .prompts import get_prompts_manager
+        prompts_manager = get_prompts_manager()
+        config_path = prompts_manager.generate_sample_prompts_config(prompts_file)
+        print(f"✅ Prompts configuration written to: {config_path.absolute()}")
+        print("   This file allows you to customize system prompts for different agents.")
+        print("   Edit this file and set PROMPTS_CONFIG_FILE environment variable to use custom prompts.")
+    except Exception as e:
+        print(f"❌ Failed to generate prompts configuration file: {e}")
 
 def show_configuration_sources(config):
     """Show where each configuration value is coming from."""
