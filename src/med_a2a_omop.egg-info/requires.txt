@@ -6,3 +6,5 @@ a2a-medical-foundation@ git+https://github.com/fastomop/omcp_a2a.git@feature/med
 httpx>=0.28.1
 fastmcp
 mcp>=1.12.1
+numpy>=1.24.0
+psutil>=5.9.0

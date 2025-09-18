@@ -1,16 +1,25 @@
+import sys
+import os
 import uvicorn
 from a2a.server.apps import A2AStarletteApplication
 from dotenv import load_dotenv
-import os
-import uvicorn
+import logging
+
+# Setup file-based logging
+log_file = os.path.join(os.path.dirname(__file__), 'omop_agent.log')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename=log_file,
+    filemode='w'
+)
 
 from a2a.types import AgentCard
 from a2a.server.request_handlers.request_handler import RequestHandler
 from a2a.server.request_handlers.jsonrpc_handler import JSONRPCHandler
 
-from .agents.omop_database_agent import OMOPDatabaseAgent
-from a2a_medical.integrations.mcp_official import MCPServer
-from .config import get_config
+from med_a2a_omop.agents.omop_database_agent import OMOPDatabaseAgent
+from med_a2a_omop.config import get_config
 
 async def main():
     load_dotenv()
@@ -34,35 +43,61 @@ async def main():
         print("Please resolve these issues and try again.")
         return
     
-    # Create wrapper script if needed
-    wrapper_script = config.create_wrapper_script()
-    print(f"📜 Created OMCP wrapper script: {wrapper_script}")
-
-    # Get MCP server configuration
+    # Validate configuration
     try:
-        mcp_config = config.get_mcp_server_config()
-        mcp_servers = [MCPServer(
-            name=mcp_config["name"],
-            url=mcp_config["url"],
-            description=mcp_config["description"],
-            medical_speciality=mcp_config["medical_speciality"],
-            working_dir=mcp_config["working_dir"],
-            env=mcp_config["env"]
-        )]
-        
-        print(f"🏥 OMCP Server: {mcp_config['working_dir']}")
-        print(f"🔧 Using UV: {mcp_config['env']['UV_EXECUTABLE']}")
-        print(f"📄 Schemas: CDM={mcp_config['env']['CDM_SCHEMA']}, VOCAB={mcp_config['env']['VOCAB_SCHEMA']}")
+        omcp_server_path = config.get_omcp_server_path()
+        print(f"🏥 OMCP Server: {omcp_server_path}")
+        print(f"🔧 Using UV: {config.get_uv_executable() or 'uv'}")
+        print(f"📄 Schemas: CDM=base, VOCAB=base")
         
     except RuntimeError as e:
         print(f"❌ Configuration error: {e}")
         return
 
+    # Create MCP server configuration using the expected format
+    from med_a2a_omop.integrations.mcp_manager import MCPServerConfig
+
+    # Use the plural method that reads from JSON config
+    mcp_servers_config = config.get_mcp_servers_config()
+    mcp_servers = []
+    
+    for server_name, server_config in mcp_servers_config.items():
+        mcp_servers.append(MCPServerConfig(
+            name=server_name,
+            command=server_config["command"],
+            args=server_config["args"],
+            env=server_config.get("env", {}),
+            cwd=server_config.get("cwd")
+        ))
+
+    # Convert to the format expected by the agent (MCPServer objects from a2a_medical)
+    from a2a_medical.integrations.mcp_official import MCPServer
+
+    # Initialize logger for this module
+    logger = logging.getLogger(__name__)
+    
+    # First, let's inspect the actual MCPServer constructor
+    import inspect
+    sig = inspect.signature(MCPServer.__init__)
+    logger.info(f"MCPServer constructor signature: {sig}")
+
+    # Use the wrapper script for more reliable execution
+    wrapper_script = config.project_root / "scripts" / "omcp_wrapper.py"
+    
+    adapted_servers = [MCPServer(
+        name=server.name,
+        description="OMOP Database MCP Server", 
+        url=f"stdio://{wrapper_script}",
+        args=[],  # Wrapper handles all arguments internally
+        env={},   # Wrapper handles environment internally
+        working_dir=str(config.project_root)
+    ) for server in mcp_servers]
+
     # Create OMOP agent
     omop_agent = await OMOPDatabaseAgent.create(
         agent_id="omop-db-agent-01",
-        mcp_servers=mcp_servers,
-        ollama_model=config.get_ollama_model()
+        mcp_servers=adapted_servers,
+        ollama_model=config.omop_model
     )
 
     # Build agent card and application

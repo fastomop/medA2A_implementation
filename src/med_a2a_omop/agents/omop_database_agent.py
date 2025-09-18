@@ -597,6 +597,62 @@ WHERE p.{demographic_column} IN (
                 context_parts.append(f"  - {lesson}")
         
         return "\n".join(context_parts)
+
+    def get_semantic_focused_context(self, question: str, semantic_context: Dict[str, Any], failed_attempts: Optional[List[Dict]] = None) -> str:
+        """
+        Generate focused context using rich semantic analysis from Semantic Agent.
+        This replaces the old extracted_context approach with direct semantic context usage.
+        """
+        context_parts = []
+        
+        # Use rich semantic information directly
+        domains = semantic_context.get('omop_domains', [])
+        analysis_type = semantic_context.get('analysis_type', 'unknown')
+        suggested_tables = semantic_context.get('suggested_tables', [])
+        
+        context_parts.append("=== OMOP CDM v5.4 CONTEXT (Semantic-Enhanced) ===")
+        context_parts.append(f"Question: {question}")
+        context_parts.append(f"Analysis Type: {analysis_type}")
+        context_parts.append(f"OMOP Domains: {', '.join(domains)}")
+        context_parts.append(f"Suggested Tables: {', '.join(suggested_tables)}")
+        
+        # Add medical concepts with rich OMOP mappings
+        if 'medical_concepts' in semantic_context:
+            context_parts.append("\n=== MEDICAL CONCEPTS WITH OMOP MAPPINGS ===")
+            for concept in semantic_context['medical_concepts']:
+                concept_info = f"• {concept.get('original_term', 'Unknown')}"
+                if concept.get('concept_type') == 'drug' and concept.get('rxnorm_concept_code'):
+                    concept_info += f" → RxNorm Code: {concept['rxnorm_concept_code']}"
+                    concept_info += f" (ID: {concept.get('concept_id', 'N/A')})"
+                context_parts.append(concept_info)
+        
+        # Add temporal relationships
+        if semantic_context.get('temporal_relationships'):
+            context_parts.append("\n=== TEMPORAL CONSTRAINTS ===")
+            for rel in semantic_context['temporal_relationships']:
+                context_parts.append(f"• {rel.get('description', rel.get('type', 'Unknown'))}")
+        
+        # Add relevant table schemas based on domains
+        if domains:
+            context_parts.append(f"\n=== RELEVANT OMOP TABLES ===")
+            for domain in domains:
+                # Find tables for this domain
+                for table_name, table_obj in self.omop_tables.items():
+                    if table_obj.domain == domain:
+                        # Simple table description
+                        context_parts.append(f"• {table_name}: {table_obj.description}")
+                        # Add key columns if available
+                        if table_obj.standard_columns:
+                            key_cols = list(table_obj.standard_columns.keys())[:5]  # First 5 columns
+                            context_parts.append(f"  Key columns: {', '.join(key_cols)}")
+        
+        # Add failure context if retrying
+        if failed_attempts:
+            context_parts.append(f"\n=== PREVIOUS ATTEMPTS ({len(failed_attempts)} failures) ===")
+            for i, attempt in enumerate(failed_attempts[-2:], 1):  # Show last 2 attempts
+                context_parts.append(f"Attempt {i}: {attempt.get('error', 'Unknown error')}")
+        
+        return "\n".join(context_parts)
     
     def _identify_relevant_domains(self, question: str) -> List[str]:
         """Identify relevant OMOP domains from the question"""
@@ -937,6 +993,12 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
         logger.debug(f"[OMOPDatabaseAgent] Learning from observation: {observation.data}")
         if observation.data:
             state.memory["current_nl_query"] = observation.data.question
+            # CRITICAL: Extract semantic context from the orchestrator
+            if hasattr(observation.data, 'semantic_context') and observation.data.semantic_context:
+                state.memory["semantic_context"] = observation.data.semantic_context
+                logger.info(f"[OMOPDatabaseAgent] 🧠 Received semantic context for SQL generation")
+            else:
+                logger.debug(f"[OMOPDatabaseAgent] No semantic context provided")
         logger.debug(f"[OMOPDatabaseAgent] Updated mental state: {state.memory}")
         return state
 
@@ -951,24 +1013,32 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
         # Check for previous failed attempts
         failed_attempts = state.memory.get("failed_sql_attempts", [])
         
-        # Step 1: Extract structured context from the query
-        print("[OMOPDatabaseAgent] 🧠 Step 1/3: Extracting query context...")
-        extracted_context = await self._extract_query_context(nl_query)
+        # Get semantic context (already extracted by Semantic Agent)
+        semantic_context = state.memory.get("semantic_context")
         
-        # Step 2: Get hyper-focused context from the world model
-        print("[OMOPDatabaseAgent] 📚 Step 2/3: Retrieving targeted world model context...")
-        world_model_context = self.omop_world_model.get_comprehensive_context(
-            nl_query, extracted_context, failed_attempts
+        if not semantic_context:
+            error_msg = "No semantic context provided - Semantic Agent must process query first"
+            print(f"[OMOPDatabaseAgent] ❌ {error_msg}")
+            return Action(action_type="error", parameters={"message": error_msg})
+        
+        print("[OMOPDatabaseAgent] 🧠 Using rich semantic context from Semantic Agent")
+        print(f"[OMOPDatabaseAgent] 📊 Concepts: {len(semantic_context.get('medical_concepts', []))}, "
+              f"Analysis: {semantic_context.get('analysis_type', 'unknown')}")
+        
+        # Step 2: Get focused world model context using semantic info
+        print("[OMOPDatabaseAgent] 📚 Step 1/2: Retrieving focused world model context...")
+        world_model_context = self.omop_world_model.get_semantic_focused_context(
+            nl_query, semantic_context, failed_attempts
         )
         
-        # Step 3: Generate the SQL query
-        print("[OMOPDatabaseAgent]  SQL Step 3/3: Generating SQL query with focused context...")
+        # Step 3: Generate the SQL query with semantic enhancement  
+        print("[OMOPDatabaseAgent] ⚡ Step 2/2: Generating SQL query with semantic guidance...")
         if failed_attempts:
             # Build a detailed prompt for refinement
-            prompt = self._build_refinement_prompt(nl_query, world_model_context, failed_attempts)
+            prompt = self._build_refinement_prompt(nl_query, world_model_context, failed_attempts, semantic_context)
         else:
             # Build a concise, focused prompt for the first attempt
-            prompt = self._build_initial_prompt(nl_query, world_model_context)
+            prompt = self._build_initial_prompt(nl_query, world_model_context, semantic_context)
 
         ollama_response = await self.ollama_reason(prompt["prompt"], system_prompt=prompt["system_prompt"], include_tools=False)
 
@@ -986,23 +1056,103 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
         logger.debug(f"[OMOPDatabaseAgent] Generated action: {action}")
         return action
 
-    def _build_initial_prompt(self, nl_query: str, context: str) -> Dict[str, str]:
-        """Builds a concise and focused prompt for the first attempt."""
-        system_prompt = get_prompt("omop_database", "sql_generator")
+    def _build_initial_prompt(self, nl_query: str, context: str, semantic_context: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """Builds a dynamic system prompt based on query intent and semantic classification."""
+        # Start with base OMOP rules
+        system_prompt = get_prompt("omop_database", "sql_generator_base")
         
-        prompt = f"""
-### CONTEXT
-{context}
-
-### QUESTION
-"{nl_query}"
-
-### SQL QUERY
-        """.strip()
+        # Add strategy-specific patterns based on semantic context
+        if semantic_context:
+            query_intent = semantic_context.get('query_intent', {})
+            sql_strategy = query_intent.get('sql_strategy', 'direct_lookup')
+            
+            # Determine which concepts have exact matches vs need database lookup
+            needs_database_lookup = self._check_for_database_lookup_needs(semantic_context)
+            needs_hierarchical = sql_strategy == 'hierarchy_search' or query_intent.get('type') == 'hierarchical_search'
+            needs_cooccurrence = query_intent.get('type') in ['co_occurrence', 'temporal_analysis']
+            
+            print(f"[OMOPDatabaseAgent] 🧠 Query strategy: {sql_strategy}, DB lookup: {needs_database_lookup}, Hierarchical: {needs_hierarchical}, Co-occurrence: {needs_cooccurrence}")
+            
+            # Add appropriate pattern sections
+            if needs_cooccurrence:
+                system_prompt += "\n\n" + get_prompt("omop_database", "sql_patterns_cooccurrence")
+            elif needs_hierarchical:
+                system_prompt += "\n\n" + get_prompt("omop_database", "sql_patterns_hierarchical") 
+            elif needs_database_lookup:
+                system_prompt += "\n\n" + get_prompt("omop_database", "sql_patterns_database_lookup")
+            else:
+                system_prompt += "\n\n" + get_prompt("omop_database", "sql_patterns_direct_lookup")
+        else:
+            # Fallback to direct lookup if no semantic context
+            system_prompt += "\n\n" + get_prompt("omop_database", "sql_patterns_direct_lookup")
         
+        # Build focused prompt based on query type
+        prompt_parts = []
+        
+        # Add minimal context for simple queries, full context for complex ones
+        if semantic_context and query_intent.get('complexity') == 'simple':
+            # Minimal context for simple queries
+            prompt_parts.extend([
+                "### SIMPLE QUERY CONTEXT",
+                self._get_minimal_context(semantic_context, nl_query)
+            ])
+        else:
+            # Full context for complex queries
+            prompt_parts.extend([
+                "### CONTEXT",
+                context
+            ])
+        
+        prompt_parts.extend([
+            "",
+            "### QUESTION", 
+            f'"{nl_query}"',
+            "",
+            "### SQL QUERY"
+        ])
+        
+        prompt = "\n".join(prompt_parts)
         return {"system_prompt": system_prompt, "prompt": prompt}
+    
+    def _check_for_database_lookup_needs(self, semantic_context: Dict[str, Any]) -> bool:
+        """Check if any concepts in semantic context need database lookup (no exact concept_id)."""
+        if 'medical_concepts' not in semantic_context:
+            return False
+            
+        for concept in semantic_context['medical_concepts']:
+            search_strategy = concept.get('search_strategy', '')
+            if search_strategy == 'database_lookup':
+                return True
+        return False
+    
+    def _get_minimal_context(self, semantic_context: Dict[str, Any], nl_query: str) -> str:
+        """Generate minimal context for simple queries to avoid information overload."""
+        context_parts = []
+        
+        # Add only essential information
+        context_parts.append(f"Query: {nl_query}")
+        context_parts.append(f"Type: {semantic_context.get('analysis_type', 'count')}")
+        
+        # Add concept information in simple format
+        if 'medical_concepts' in semantic_context:
+            context_parts.append("\nConcepts:")
+            for concept in semantic_context['medical_concepts']:
+                original = concept.get('original_term', '')
+                concept_id = concept.get('concept_id')
+                concept_code = concept.get('rxnorm_concept_code') or concept.get('concept_code')
+                search_strategy = concept.get('search_strategy', '')
+                
+                if concept_id and search_strategy == 'vocabulary_lookup':
+                    context_parts.append(f"• {original} → concept_id: {concept_id}")
+                elif concept_code and search_strategy == 'vocabulary_lookup':
+                    context_parts.append(f"• {original} → concept_code: {concept_code}")
+                elif search_strategy == 'database_lookup':
+                    search_terms = concept.get('db_search_terms', [original.lower()])
+                    context_parts.append(f"• {original} → search database for: {search_terms}")
+        
+        return "\n".join(context_parts)
 
-    def _build_refinement_prompt(self, nl_query: str, context: str, failed_attempts: List[Dict]) -> Dict[str, str]:
+    def _build_refinement_prompt(self, nl_query: str, context: str, failed_attempts: List[Dict], semantic_context: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         """Builds a detailed prompt for refining a failed query."""
         system_prompt = get_prompt("omop_database", "sql_refiner")
         
@@ -1011,10 +1161,22 @@ class OMOPDatabaseAgent(MCPDiscoveryMixin, OllamaReasoningMixin, MedicalAgent, R
             failure_context += f"Attempt {i} SQL: {attempt['sql']}\n"
             failure_context += f"Attempt {i} Error: {attempt['error']}\n---\n"
         
+        semantic_section = ""
+        if semantic_context:
+            print("[OMOPDatabaseAgent] 🧠 Including semantic enrichment in SQL refinement")
+            semantic_guidance = self._extract_semantic_guidance(semantic_context)
+            semantic_section = f"""
+
+### SEMANTIC ANALYSIS  
+Medical concepts and search guidance: {semantic_guidance}
+Use this semantic analysis to guide SQL refinement. For drugs, consider both exact names and core ingredients.
+Be flexible with dosages and formulations - focus on the main drug component when specific formulations aren't found.
+"""
+
         prompt = f"""
 ### CONTEXT
 {context}
-
+{semantic_section}
 {failure_context}
 
 ### INSTRUCTIONS
@@ -1027,6 +1189,84 @@ Analyze the previous errors and the context to generate a corrected SQL query fo
         """.strip()
         
         return {"system_prompt": system_prompt, "prompt": prompt}
+
+    def _extract_semantic_guidance(self, semantic_context: Dict[str, Any]) -> str:
+        """Extract comprehensive search guidance from semantic context."""
+        try:
+            guidance_parts = []
+            
+            # Extract medical concepts with OMOP-specific guidance
+            if 'medical_concepts' in semantic_context:
+                for concept in semantic_context['medical_concepts']:
+                    original = concept.get('original_term', '')
+                    core_drug = concept.get('core_drug_name', '')
+                    standardized = concept.get('standardized_term', '')
+                    
+                    if concept.get('concept_type') == 'drug':
+                        # Use vocabulary-enhanced information if available
+                        concept_code = concept.get('rxnorm_concept_code') or concept.get('concept_code')
+                        vocabulary_id = concept.get('vocabulary_id', 'RxNorm')
+                        concept_id = concept.get('concept_id')
+                        search_strategy = concept.get('search_strategy', 'flexible')
+                        
+                        if concept_code and search_strategy in ['vocabulary_lookup', 'vocabulary_fallback']:
+                            guidance_parts.append(f"DRUG: '{original}' -> VOCABULARY MATCH FOUND")
+                            guidance_parts.append(f"  - REQUIRED: Use EXACT concept_code = '{concept_code}'")
+                            guidance_parts.append(f"  - REQUIRED: Use vocabulary_id = '{vocabulary_id}'") 
+                            guidance_parts.append(f"  - NEVER use different concept codes like '308136' or 'NDA020800'")
+                            guidance_parts.append(f"  - Use concept hierarchy: concept_relationship + concept_ancestor")
+                            guidance_parts.append(f"  - Confidence: {concept.get('match_confidence', 1.0):.2f}")
+                        elif search_strategy == 'database_lookup':
+                            search_guidance = concept.get('search_guidance', {})
+                            primary_term = search_guidance.get('primary_term', original)
+                            fallback_terms = search_guidance.get('fallback_terms', [core_drug, standardized])
+                            
+                            guidance_parts.append(f"DRUG: '{original}' -> PERFORM DATABASE CONCEPT LOOKUP")
+                            guidance_parts.append(f"  - PRIMARY: Search for concepts matching '{primary_term}'")
+                            guidance_parts.append(f"  - FALLBACKS: {fallback_terms}")
+                            guidance_parts.append(f"  - REQUIREMENT: Query concept table to find matching concept_ids")
+                            guidance_parts.append(f"  - REQUIREMENT: Validate concepts exist in drug_exposure table")
+                            guidance_parts.append(f"  - REQUIREMENT: Use RxNorm vocabulary and standard concepts only")
+                            guidance_parts.append(f"  - METHOD: Use ILIKE patterns and validate with actual patient data")
+                        elif search_strategy == 'like_pattern':
+                            like_pattern = concept.get('like_pattern', core_drug or standardized)
+                            guidance_parts.append(f"DRUG: '{original}' -> USE LIKE PATTERN (no vocabulary match)")
+                            guidance_parts.append(f"  - FALLBACK: concept_name LIKE '%{like_pattern.lower()}%'")
+                            guidance_parts.append(f"  - Target: RxNorm vocabulary preferred")
+                            guidance_parts.append(f"  - Note: This is less precise than concept code lookup")
+                        elif concept_code and search_strategy == 'learned_verified':
+                            guidance_parts.append(f"DRUG: '{original}' -> LEARNED PATTERN")
+                            guidance_parts.append(f"  - VERIFIED CODE: concept_code = '{concept_code}'")
+                            guidance_parts.append(f"  - Use concept hierarchy: concept_relationship + concept_ancestor")
+                        else:
+                            guidance_parts.append(f"DRUG: '{original}' -> Use OMOP concept hierarchy")
+                            guidance_parts.append(f"  - Search strategy: RxNorm vocabulary + concept_ancestor table")
+                            guidance_parts.append(f"  - Core ingredient: '{core_drug or standardized}'")
+                            guidance_parts.append(f"  - Fallback: concept_name LIKE '%{(core_drug or standardized).lower()}%'")
+                    else:
+                        guidance_parts.append(f"{concept.get('concept_type', 'concept').title()}: '{original}' -> '{standardized}'")
+            
+            # Add OMOP-specific instructions
+            guidance_parts.append("OMOP STRATEGY:")
+            guidance_parts.append("  1. Try concept_code lookup in RxNorm vocabulary first")
+            guidance_parts.append("  2. Use concept_ancestor for ingredient hierarchies") 
+            guidance_parts.append("  3. Join concept_relationship with 'Maps to' relationships")
+            guidance_parts.append("  4. Fallback to concept_name LIKE searches if hierarchy fails")
+            
+            # Add temporal relationships
+            if 'temporal_relationships' in semantic_context:
+                for rel in semantic_context['temporal_relationships']:
+                    guidance_parts.append(f"TEMPORAL: {rel.get('description', rel.get('constraint', ''))}")
+            
+            # Add analysis type
+            if 'analysis_type' in semantic_context:
+                guidance_parts.append(f"ANALYSIS: {semantic_context['analysis_type']}")
+            
+            return "\n".join(guidance_parts) if guidance_parts else str(semantic_context)
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract semantic guidance: {e}")
+            return str(semantic_context)
 
     async def _extract_query_context(self, nl_query: str) -> Dict[str, Any]:
         """

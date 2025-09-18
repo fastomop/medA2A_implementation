@@ -11,4 +11,6 @@ Requires-Dist: a2a-medical-foundation@ git+https://github.com/fastomop/omcp_a2a.
 Requires-Dist: httpx>=0.28.1
 Requires-Dist: fastmcp
 Requires-Dist: mcp>=1.12.1
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: psutil>=5.9.0
 Dynamic: license-file

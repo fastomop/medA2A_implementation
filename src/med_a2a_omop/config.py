@@ -7,12 +7,20 @@ import os
 import sys
 import shutil
 import platform
+import signal
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import subprocess
 import json
 from dotenv import load_dotenv
 import logging
+
+try:
+    from mcp.client.stdio import StdioServerParameters
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +107,26 @@ class MedA2AConfig:
         3. Auto-discovery function
         4. Default value
         """
-        # 1. Check JSON config file first
-        if key in self.explicit_config:
-            value = self.explicit_config[key]
-            logger.debug(f"Using config file value for {key}: {value}")
-            return value
+        # 1. Check JSON config file first - handle nested keys with dot notation
+        if "." in key:
+            # Handle nested keys like "services.ollama_timeout"
+            keys = key.split(".")
+            config_value = self.explicit_config
+            for k in keys:
+                if isinstance(config_value, dict) and k in config_value:
+                    config_value = config_value[k]
+                else:
+                    config_value = None
+                    break
+            if config_value is not None:
+                logger.debug(f"Using config file value for {key}: {config_value}")
+                return config_value
+        else:
+            # Handle simple keys
+            if key in self.explicit_config:
+                value = self.explicit_config[key]
+                logger.debug(f"Using config file value for {key}: {value}")
+                return value
         
         # 2. Check environment variable
         env_value = os.getenv(env_var)
@@ -127,100 +150,134 @@ class MedA2AConfig:
         """Validate that the environment is properly configured."""
         issues = []
         
-        # Check UV installation
-        if not self.get_uv_executable():
-            issues.append("UV package manager not found. Install from: https://docs.astral.sh/uv/")
-        
         # Check Ollama installation
         if not self.is_ollama_available():
             issues.append("Ollama not available. Install from: https://ollama.ai/")
-        
-        # Check OMCP server
-        if not self.get_omcp_server_path():
-            issues.append("OMCP server not found. Set OMCP_SERVER_PATH or place in expected locations.")
         
         if issues:
             logger.warning("Configuration issues found:")
             for issue in issues:
                 logger.warning(f"  - {issue}")
     
-    # =================== PATH DISCOVERY ===================
+    
+
+    
     
     def get_omcp_server_path(self) -> Optional[Path]:
-        """Get OMCP server path from explicit configuration only."""
+        """Get the path to the OMCP server installation."""
+        def discover_omcp():
+            # 1. First check for git submodule (automatic setup - no config needed!)
+            submodule_path = self.project_root / "omcp_server"
+            if submodule_path.exists() and (submodule_path / "src" / "omcp" / "main.py").exists():
+                return submodule_path
+
+            # 2. Try common locations
+            possible_locations = [
+                Path.home() / "omcp_server",
+                Path.home() / "projects" / "omcp_server",
+                Path.home() / "src" / "omcp_server",
+                Path("/opt/omcp_server"),
+                Path("/usr/local/omcp_server"),
+            ]
+
+            for location in possible_locations:
+                if location.exists() and (location / "src" / "omcp" / "main.py").exists():
+                    return location
+            return None
         
-        # 1. Check JSON config file first (recommended)
-        if "paths" in self.explicit_config and "omcp_server_path" in self.explicit_config["paths"]:
-            path_str = self.explicit_config["paths"]["omcp_server_path"]
-            path = Path(path_str)
-            if path.exists() and (path / "src" / "omcp" / "main.py").exists():
-                logger.info(f"Using OMCP server from config file: {path}")
-                return path
-            else:
-                logger.error(f"OMCP server path in config file is invalid: {path_str}")
-                return None
+        path_str = self._get_config_value(
+            "paths.omcp_server_path",
+            "OMCP_SERVER_PATH",
+            None,
+            discover_omcp
+        )
         
-        # 2. Check environment variable as fallback
-        env_path = os.getenv("OMCP_SERVER_PATH")
-        if env_path:
-            path = Path(env_path)
-            if path.exists() and (path / "src" / "omcp" / "main.py").exists():
-                logger.info(f"Using OMCP server from environment: {path}")
-                return path
-            else:
-                logger.error(f"OMCP server path in environment variable is invalid: {env_path}")
-                return None
-        
-        # 3. No auto-discovery - require explicit configuration
-        logger.warning("OMCP server path not configured. Please set in config file or environment variable.")
+        if path_str:
+            return Path(path_str)
+        return None
+
+    def get_vocabulary_path(self) -> Optional[Path]:
+        """Get the path to the OMOP vocabulary files."""
+        def discover_vocabulary():
+            # 1. Try common OMOP vocabulary locations
+            possible_locations = [
+                Path.home() / "Downloads" / "omop_vocab_current",
+                Path.home() / "omop_vocabulary",
+                Path.home() / "data" / "omop_vocabulary",
+                Path("/opt/omop_vocabulary"),
+                Path("/usr/local/omop_vocabulary"),
+                # Check if vocabulary is bundled with OMCP server
+                self.get_omcp_server_path() / "vocabulary" if self.get_omcp_server_path() else None,
+            ]
+
+            for location in possible_locations:
+                if location and location.exists() and (location / "CONCEPT.csv").exists():
+                    return location
+            return None
+
+        path_str = self._get_config_value(
+            "paths.vocabulary_path",
+            "OMOP_VOCABULARY_PATH",
+            None,
+            discover_vocabulary
+        )
+
+        if path_str:
+            return Path(path_str)
+
         return None
 
     def get_uv_executable(self) -> Optional[str]:
-        """Get UV executable path with limited fallback to PATH only."""
-        
-        # 1. Check JSON config file first
-        if "paths" in self.explicit_config and "uv_executable" in self.explicit_config["paths"]:
-            uv_config = self.explicit_config["paths"]["uv_executable"]
+        """Get the UV package manager executable path."""
+        def discover_uv():
+            # Check if uv is in PATH
+            uv_path = shutil.which("uv")
+            if uv_path:
+                return uv_path
             
-            # If it's an absolute path, check if it exists
-            if Path(uv_config).is_absolute():
-                if Path(uv_config).exists():
-                    logger.info(f"Using UV from config file: {uv_config}")
-                    return uv_config
-                else:
-                    logger.error(f"UV executable path in config file is invalid: {uv_config}")
-                    return None
-            else:
-                # If it's just a command name, try to find it in PATH
-                uv_exec = shutil.which(uv_config)
-                if uv_exec:
-                    logger.info(f"Using UV from config file (found in PATH): {uv_exec}")
-                    return uv_exec
-                else:
-                    logger.error(f"UV executable '{uv_config}' from config file not found in PATH")
-                    return None
+            # Check common installation locations
+            possible_locations = [
+                Path.home() / ".cargo" / "bin" / "uv",
+                Path.home() / ".local" / "bin" / "uv",
+                Path("/usr/local/bin/uv"),
+                Path("/opt/homebrew/bin/uv"),  # macOS with Homebrew
+            ]
+            
+            for location in possible_locations:
+                if location.exists() and location.is_file():
+                    return str(location)
+            
+            return None
         
-        # 2. Check environment variable
-        env_uv = os.getenv("UV_EXECUTABLE")
-        if env_uv:
-            if Path(env_uv).exists():
-                logger.info(f"Using UV from environment: {env_uv}")
-                return env_uv
-            else:
-                uv_exec = shutil.which(env_uv)
-                if uv_exec:
-                    logger.info(f"Using UV from environment (found in PATH): {uv_exec}")
-                    return uv_exec
+        return self._get_config_value(
+            "paths.uv_executable",
+            "UV_EXECUTABLE", 
+            None,
+            discover_uv
+        )
+    
+    def create_wrapper_script(self) -> Path:
+        """Create a wrapper script for running the OMCP server."""
+        omcp_path = self.get_omcp_server_path()
+        if not omcp_path:
+            raise ValueError("OMCP server path not configured")
         
-        # 3. Only check PATH (standard practice) - no system searching
-        uv_exec = shutil.which("uv")
-        if uv_exec:
-            logger.info(f"Found UV in PATH: {uv_exec}")
-            return uv_exec
+        wrapper_content = f"""#!/bin/bash
+# Auto-generated wrapper script for OMCP server
+cd "{omcp_path}"
+{self.get_uv_executable() or 'uv'} run --project "{omcp_path}" python src/omcp/main.py "$@"
+"""
         
-        # 4. No deep system searching
-        logger.warning("UV executable not found. Please install UV or set path in config file.")
-        return None
+        wrapper_path = self.project_root / "omcp_wrapper.sh"
+        with open(wrapper_path, 'w') as f:
+            f.write(wrapper_content)
+        
+        # Make executable
+        import stat
+        st = os.stat(wrapper_path)
+        os.chmod(wrapper_path, st.st_mode | stat.S_IEXEC)
+        
+        return wrapper_path
     
     # =================== SERVICE CONFIGURATION ===================
     
@@ -231,14 +288,15 @@ class MedA2AConfig:
             return self.explicit_config["services"]["ollama_url"]
         # Fallback to environment variable
         return os.getenv("OLLAMA_URL", "http://localhost:11434")
-    
-    def get_ollama_model(self) -> str:
-        """Get Ollama model name."""
+
+    @property
+    def ollama_model_name(self) -> str:
+        """Get the Ollama model name."""
         # Check config file first
-        if "services" in self.explicit_config and "ollama_model" in self.explicit_config["services"]:
-            return self.explicit_config["services"]["ollama_model"]
+        if "services" in self.explicit_config and "ollama_model_name" in self.explicit_config["services"]:
+            return self.explicit_config["services"]["ollama_model_name"]
         # Fallback to environment variable
-        return os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+        return os.getenv("OLLAMA_MODEL_NAME", "llama3.1:8b")
     
     def is_ollama_available(self) -> bool:
         """Check if Ollama service is available."""
@@ -273,132 +331,230 @@ class MedA2AConfig:
     
     # =================== MCP SERVER CONFIGURATION ===================
     
+    def get_mcp_servers_config(self) -> Dict[str, Dict[str, Any]]:
+        """Get MCP servers configuration for all servers."""
+        # Check for explicit mcpServers configuration
+        if "mcpServers" in self.explicit_config:
+            return self.explicit_config["mcpServers"]
+        
+        # Fallback to single server configuration for backward compatibility
+        try:
+            single_server_config = self.get_mcp_server_config()
+            return {
+                "omop_db_server": {
+                    "command": single_server_config["stdio_params"].command,
+                    "args": single_server_config["stdio_params"].args,
+                    "env": single_server_config["stdio_params"].env
+                }
+            }
+        except Exception:
+            # Default configuration if nothing else works
+            return {
+                "omop_db_server": {
+                    "command": "uv",
+                    "args": ["run", "python", "src/omcp/main.py"],
+                    "env": {
+                        "DB_TYPE": "duckdb",
+                        "CDM_SCHEMA": "base",
+                        "VOCAB_SCHEMA": "base"
+                    }
+                }
+            }
+    
     def get_mcp_server_config(self) -> Dict[str, Any]:
-        """Get MCP server configuration for OMCP."""
+        """Get MCP server configuration for the external OMOP server."""
+        
+        # Get the path to the external OMCP server
         omcp_path = self.get_omcp_server_path()
         if not omcp_path:
-            raise RuntimeError("OMCP server path not found. Set OMCP_SERVER_PATH environment variable.")
+            raise ValueError("OMCP server path not configured. Please set 'omcp_server_path' in config or OMCP_SERVER_PATH environment variable")
         
-        # Create wrapper script path
-        wrapper_script = self.project_root / "scripts" / "omcp_wrapper.py"
+        # Check if the OMCP server main.py exists
+        omcp_main = omcp_path / "src" / "omcp" / "main.py"
+        if not omcp_main.exists():
+            raise ValueError(f"OMCP server main.py not found at {omcp_main}")
+        
+        # Get UV executable or use python directly
+        uv_exec = self.get_uv_executable()
+        
+        # Determine the command to run the server
+        if uv_exec:
+            # Use UV to run in the OMCP server's environment
+            command = str(uv_exec)
+            args = ["run", "python", "src/omcp/main.py"]
+        else:
+            # Fallback to direct python execution
+            command = sys.executable
+            args = [str(omcp_main)]
+        
+        # The working directory should be the OMCP server root
+        cwd = str(omcp_path)
+        
+        # Build environment variables for the external OMCP server
+        # The external server expects DB_TYPE and DB_PATH, not DB_CONNECTION_STRING
+        env = {}
+        
+        # Check for the synthea database
+        synthea_db = omcp_path / "synthetic_data" / "synthea.duckdb"
+        if synthea_db.exists():
+            env["DB_TYPE"] = "duckdb"
+            env["DB_PATH"] = str(synthea_db)
+        else:
+            # Fallback to environment variables or defaults
+            env["DB_TYPE"] = os.getenv("DB_TYPE", "duckdb")
+            env["DB_PATH"] = os.getenv("DB_PATH", str(self.project_root / "omop.duckdb"))
+        
+        # Add schema configurations
+        env["CDM_SCHEMA"] = os.getenv("CDM_SCHEMA", "base")
+        env["VOCAB_SCHEMA"] = os.getenv("VOCAB_SCHEMA", "base")
+        
+        # MCP server host/port (for the external server, though it uses stdio)
+        env["MCP_HOST"] = os.getenv("MCP_HOST", "localhost")
+        env["MCP_PORT"] = os.getenv("MCP_PORT", "8080")
+
+        # Construct StdioServerParameters for the external server
+        stdio_params = StdioServerParameters(
+            command=command,
+            args=args,
+            cwd=cwd,
+            env=env
+        )
         
         return {
             "name": "omop_db_server",
-            "url": f"stdio://{wrapper_script}",
-            "description": "Provides OMOP CDM database access via MCP",
+            "description": "Provides OMOP CDM database access via external OMCP server",
             "medical_speciality": "omop_cdm",
-            "working_dir": str(omcp_path),
-            "wrapper_script": str(wrapper_script),
-            "env": {
-                "DB_TYPE": os.getenv("DB_TYPE", "duckdb"),
-                "CDM_SCHEMA": os.getenv("CDM_SCHEMA", "base"), 
-                "VOCAB_SCHEMA": os.getenv("VOCAB_SCHEMA", "base"),
-                "OMCP_SERVER_PATH": str(omcp_path),
-                "UV_EXECUTABLE": self.get_uv_executable(),
-            }
+            "stdio_params": stdio_params,
         }
     
-    # =================== SETUP AND VALIDATION ===================
     
-    def create_wrapper_script(self) -> Path:
-        """Create a cross-platform OMCP wrapper script."""
-        scripts_dir = self.project_root / "scripts"
-        scripts_dir.mkdir(exist_ok=True)
-        
-        wrapper_path = scripts_dir / "omcp_wrapper.py"
-        
-        # Generate wrapper script content
-        wrapper_content = self._generate_wrapper_script()
-        
-        with open(wrapper_path, 'w') as f:
-            f.write(wrapper_content)
-        
-        # Make executable on Unix-like systems
-        if platform.system() != "Windows":
-            os.chmod(wrapper_path, 0o755)
-        
-        return wrapper_path
     
-    def _generate_wrapper_script(self) -> str:
-        """Generate cross-platform wrapper script content."""
-        uv_executable = self.get_uv_executable()
+    def check_and_resolve_database_locks(self) -> List[str]:
+        """Check for and resolve database file locks."""
+        issues = []
+        resolved = []
+        
         omcp_path = self.get_omcp_server_path()
+        if not omcp_path:
+            return ["OMCP server path not configured - cannot check database locks"]
         
-        return f'''#!/usr/bin/env python3
-"""
-Cross-platform OMCP server wrapper script.
-Generated automatically by medA2A configuration system.
-"""
-
-import os
-import sys
-import subprocess
-import signal
-import atexit
-
-# Configuration from medA2A config system
-UV_EXECUTABLE = "{uv_executable}"
-OMCP_SERVER_PATH = "{omcp_path}"
-
-omcp_process = None
-
-def cleanup_process():
-    """Clean up the OMCP server process."""
-    global omcp_process
-    if omcp_process:
+        # Find database files that might be locked
+        db_files = []
+        synthea_db = omcp_path / "synthetic_data" / "synthea.duckdb"
+        if synthea_db.exists():
+            db_files.append(synthea_db)
+        
+        for db_file in db_files:
+            try:
+                # Try to find processes using this database file
+                result = subprocess.run(
+                    ["lsof", str(db_file)], 
+                    capture_output=True, text=True, timeout=5
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    # Parse lsof output to find PIDs
+                    lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                    pids = []
+                    for line in lines:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            try:
+                                pid = int(parts[1])
+                                pids.append(pid)
+                            except ValueError:
+                                continue
+                    
+                    if pids:
+                        logger.info(f"Found {len(pids)} processes holding locks on {db_file.name}: {pids}")
+                        
+                        # Try to kill the processes gracefully
+                        for pid in pids:
+                            try:
+                                # Check if process is still running
+                                os.kill(pid, 0)  # Signal 0 just checks if process exists
+                                
+                                # Try graceful termination first
+                                logger.info(f"Terminating process {pid} holding database lock...")
+                                os.kill(pid, signal.SIGTERM)
+                                time.sleep(1)
+                                
+                                # Check if it's still running
+                                try:
+                                    os.kill(pid, 0)
+                                    # Still running, force kill
+                                    logger.warning(f"Force killing stubborn process {pid}...")
+                                    os.kill(pid, signal.SIGKILL)
+                                    time.sleep(0.5)
+                                    resolved.append(f"Killed process {pid} holding lock on {db_file.name}")
+                                except ProcessLookupError:
+                                    resolved.append(f"Process {pid} terminated gracefully")
+                                    
+                            except ProcessLookupError:
+                                # Process already gone
+                                resolved.append(f"Process {pid} was already terminated")
+                            except PermissionError:
+                                issues.append(f"Permission denied: cannot kill process {pid} holding lock on {db_file.name}")
+                            except Exception as e:
+                                issues.append(f"Error killing process {pid}: {e}")
+                
+            except FileNotFoundError:
+                # lsof not available, try alternative method
+                try:
+                    # Try fuser if available
+                    result = subprocess.run(
+                        ["fuser", str(db_file)], 
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        issues.append(f"Database file {db_file.name} may be locked (fuser found processes)")
+                except FileNotFoundError:
+                    # Neither lsof nor fuser available, try pattern-based cleanup
+                    try:
+                        result = subprocess.run(
+                            ["pkill", "-f", str(db_file.name)], 
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if result.returncode == 0:
+                            resolved.append(f"Killed processes related to {db_file.name}")
+                        time.sleep(1)
+                    except Exception:
+                        pass
+            except Exception as e:
+                issues.append(f"Error checking locks on {db_file.name}: {e}")
+        
+        # Also clean up any lingering OMCP processes
         try:
-            omcp_process.terminate()
-            omcp_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            omcp_process.kill()
-        except:
+            result = subprocess.run(
+                ["pkill", "-f", "src/omcp/main.py"], 
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                resolved.append("Cleaned up lingering OMCP processes")
+                time.sleep(1)
+        except Exception:
             pass
+        
+        if resolved:
+            logger.info(f"Database lock cleanup completed: {resolved}")
+            # Wait a bit for locks to fully release
+            time.sleep(2)
+        
+        return issues
 
-def signal_handler(signum, frame):
-    """Handle shutdown signals."""
-    cleanup_process()
-    sys.exit(0)
-
-def main():
-    global omcp_process
-    
-    # Register cleanup and signal handlers
-    atexit.register(cleanup_process)
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    try:
-        # Change to OMCP server directory
-        os.chdir(OMCP_SERVER_PATH)
-        
-        # Execute UV run with proper environment
-        cmd = [UV_EXECUTABLE, "run", "python", "src/omcp/main.py"]
-        
-        omcp_process = subprocess.Popen(
-            cmd,
-            stdin=sys.stdin,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            env=os.environ
-        )
-        
-        return_code = omcp_process.wait()
-        sys.exit(return_code)
-        
-    except Exception as e:
-        print(f"Error running OMCP server: {{e}}", file=sys.stderr)
-        cleanup_process()
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-'''
-    
     def validate_setup(self) -> List[str]:
         """Validate the complete setup and return any issues."""
         issues = []
         
         try:
+            # First, check and resolve any database locks
+            print("🔒 Checking for database locks...")
+            lock_issues = self.check_and_resolve_database_locks()
+            if lock_issues:
+                issues.extend(lock_issues)
+            else:
+                print("✅ No database locks found or all resolved")
+            
             # Check OMCP server - this is the critical path that must be configured
             omcp_path = self.get_omcp_server_path()
             if not omcp_path:
@@ -501,7 +657,9 @@ if __name__ == "__main__":
             "services": {
                 "_comment": "Optional: Customize service URLs if different from defaults",
                 "ollama_url": self.get_ollama_url(),
-                "ollama_model": self.get_ollama_model()
+                "ollama_model_name": self.ollama_model_name,
+                "ollama_timeout": 60,
+                "mcp_timeout": 30
             },
             
             "agent_config": {
@@ -532,7 +690,9 @@ if __name__ == "__main__":
         configs_to_check = [
             ("OMCP Server", ["paths", "omcp_server_path"], "OMCP_SERVER_PATH", self.get_omcp_server_path),
             ("UV Executable", ["paths", "uv_executable"], "UV_EXECUTABLE", self.get_uv_executable),
+            ("Vocabulary Path", ["paths", "vocabulary_path"], "OMOP_VOCABULARY_PATH", self.get_vocabulary_path),
             ("Ollama URL", ["services", "ollama_url"], "OLLAMA_URL", self.get_ollama_url),
+            ("Ollama Model", ["services", "ollama_model_name"], "OLLAMA_MODEL_NAME", lambda: self.ollama_model_name),
         ]
         
         for name, config_keys, env_var, getter_func in configs_to_check:
@@ -562,6 +722,75 @@ if __name__ == "__main__":
         
         return sources
 
+    @property
+    def ollama_timeout(self) -> float:
+        return float(self._get_config_value(
+            "services.ollama_timeout", "OLLAMA_TIMEOUT", 120))
+    @property
+    def mcp_timeout(self) -> float:
+        return float(self._get_config_value(
+            "services.mcp_timeout", "MCP_TIMEOUT", 90))
+
+    # Agent-specific model configuration
+    @property
+    def orchestrator_model(self) -> str:
+        return self._get_config_value(
+            "services.orchestrator_model", "ORCHESTRATOR_MODEL", "llama3.1:8b")
+    
+    @property
+    def semantic_model(self) -> str:
+        return self._get_config_value(
+            "services.semantic_model", "SEMANTIC_MODEL", "llama3.1:8b")
+    
+    @property
+    def omop_model(self) -> str:
+        return self._get_config_value(
+            "services.omop_model", "OMOP_MODEL", "gpt-oss:20b")
+
+    # Agent-specific timeout configuration
+    @property
+    def orchestrator_timeout(self) -> float:
+        return float(self._get_config_value(
+            "services.orchestrator_timeout", "ORCHESTRATOR_TIMEOUT", 30))
+    
+    @property
+    def semantic_timeout(self) -> float:
+        return float(self._get_config_value(
+            "services.semantic_timeout", "SEMANTIC_TIMEOUT", 45))
+    
+    @property
+    def omop_timeout(self) -> float:
+        return float(self._get_config_value(
+            "services.omop_timeout", "OMOP_TIMEOUT", 180))
+
+    @property
+    def omop_agent_host(self) -> str:
+        """Get the host for the OMOP agent server."""
+        return self._get_config_value(
+            "agent_config.omop_agent_host", "MEDA2A_OMOP_AGENT_HOST", "127.0.0.1"
+        )
+    
+    @property
+    def omop_agent_port(self) -> int:
+        """Get OMOP agent server port."""
+        return int(self._get_config_value(
+            "agent_config.omop_agent_port", "MEDA2A_OMOP_AGENT_PORT", 8003
+        ))
+    
+    @property
+    def semantic_agent_host(self) -> str:
+        """Get semantic agent server host."""
+        return self._get_config_value(
+            "agent_config.semantic_agent_host", "MEDA2A_SEMANTIC_AGENT_HOST", "127.0.0.1"
+        )
+    
+    @property
+    def semantic_agent_port(self) -> int:
+        """Get semantic agent server port."""
+        return int(self._get_config_value(
+            "agent_config.semantic_agent_port", "MEDA2A_SEMANTIC_AGENT_PORT", 8004
+        ))
+
 # Global configuration instance
 _config_instance = None
 
@@ -571,3 +800,14 @@ def get_config() -> MedA2AConfig:
     if _config_instance is None:
         _config_instance = MedA2AConfig()
     return _config_instance 
+
+def get_project_root() -> Path:
+    """Find the project root directory."""
+    current = Path(__file__).parent
+    while current != current.parent:
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    
+    # Fallback to current working directory
+    return Path.cwd()

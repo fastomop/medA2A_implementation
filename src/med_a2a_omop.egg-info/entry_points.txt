@@ -1,2 +1,4 @@
 [console_scripts]
+med-a2a-eval = med_a2a_omop.evaluate_system:main_sync
+med-a2a-setup = med_a2a_omop.setup:main
 run-med-a2a = med_a2a_omop.runner:main

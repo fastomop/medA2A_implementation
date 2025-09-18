@@ -63,12 +63,21 @@ omop_agent.log
 temp/
 tmp/
 
+# Cache files
+.cache/
+*.pkl
+vocabulary_index.db
+fast_vocabulary.pkl
+
 # Debug and test files
 debug_*.py
 test_*.py
+simple_*.py
 diagnose.py
 *_debug.py
 *_test.py
+cleanup_and_update.py
+example_api_usage.py
 
 # Results and output files
 results.json
@@ -76,6 +85,10 @@ results.json
 batch_results.json
 api_result.json
 demo_results.json
+
+# Evaluation results
+evaluation_results/
+*evaluation_results*
 
 # OS generated files
 .DS_Store
@@ -104,4 +117,9 @@ run_simple.sh
 demo_all_modes.py
 
 # Auto-generated scripts with user-specific paths
-scripts/ 
+scripts/
+omcp_wrapper.sh
+
+# Legacy/unused files (backup)
+*.backup
+*_backup.py 

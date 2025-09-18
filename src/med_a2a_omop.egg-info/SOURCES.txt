@@ -2,8 +2,17 @@ LICENSE
 README.md
 pyproject.toml
 src/med_a2a_omop/__init__.py
+src/med_a2a_omop/cache.py
+src/med_a2a_omop/config.py
+src/med_a2a_omop/evaluate_system.py
+src/med_a2a_omop/prompts.py
+src/med_a2a_omop/prompts_omop_cdm.py
 src/med_a2a_omop/run_omop_agent.py
+src/med_a2a_omop/run_semantic_agent.py
 src/med_a2a_omop/runner.py
+src/med_a2a_omop/setup.py
+src/med_a2a_omop/vocabulary.py
+src/med_a2a_omop/vocabulary_fast.py
 src/med_a2a_omop.egg-info/PKG-INFO
 src/med_a2a_omop.egg-info/SOURCES.txt
 src/med_a2a_omop.egg-info/dependency_links.txt
@@ -13,5 +22,7 @@ src/med_a2a_omop.egg-info/top_level.txt
 src/med_a2a_omop/agents/__init__.py
 src/med_a2a_omop/agents/omop_database_agent.py
 src/med_a2a_omop/agents/orchestrator_agent.py
-src/med_a2a_omop/integrations/mcp_official.py
+src/med_a2a_omop/agents/semantic_agent.py
+src/med_a2a_omop/integrations/mcp_manager.py
+src/med_a2a_omop/integrations/mcp_simple.py
 src/med_a2a_omop/models/a2a_messages.py

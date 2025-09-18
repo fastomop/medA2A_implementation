@@ -1,5 +1,3 @@
-
-
 import asyncio
 import subprocess
 import time
@@ -29,10 +27,13 @@ class ApplicationWrapper:
         load_dotenv()
         self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.omop_agent_process = None
+        self.semantic_agent_process = None
         self._shutdown_requested = False
         
-        # Register cleanup on exit
+        # Register cleanup on exit and signal handlers
         atexit.register(self.cleanup_all)
+        signal.signal(signal.SIGINT, self.signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, self.signal_handler)  # Termination
 
     def cleanup_all(self):
         """Comprehensive cleanup of all processes and resources."""
@@ -43,17 +44,71 @@ class ApplicationWrapper:
         print("\n🧹 Starting comprehensive cleanup...")
         self.stop_background_services()
         
-        # Additional cleanup: kill any remaining OMCP processes
+        # Enhanced cleanup: kill all related processes
+        process_patterns = [
+            "src/omcp/main.py",
+            "src/omcp/main_robust.py", 
+            "med-a2a-eval",
+            "run_omop_agent",
+            "uvicorn.*8003",
+            "synthea.duckdb"
+        ]
+        
+        for pattern in process_patterns:
+            try:
+                result = subprocess.run(
+                    ["pkill", "-f", pattern], 
+                    capture_output=True, 
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    print(f"✅ Cleaned up processes matching: {pattern}")
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass  # pkill might not be available or no processes found
+        
+        # Force cleanup any remaining python processes with our components
         try:
             result = subprocess.run(
-                ["pkill", "-f", "src/omcp/main.py"], 
-                capture_output=True, 
-                timeout=5
+                ["ps", "aux"],
+                capture_output=True,
+                text=True,
+                timeout=10
             )
             if result.returncode == 0:
-                print("✅ Cleaned up any remaining OMCP processes")
+                lines = result.stdout.split('\n')
+                pids_to_kill = []
+                for line in lines:
+                    if any(keyword in line for keyword in ["omcp", "main_robust", "uvicorn", "med-a2a"]):
+                        parts = line.split()
+                        if len(parts) > 1:
+                            try:
+                                pid = int(parts[1])
+                                pids_to_kill.append(pid)
+                            except (ValueError, IndexError):
+                                continue
+                
+                for pid in pids_to_kill:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        print(f"🛑 Terminated process {pid}")
+                        time.sleep(0.1)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                        
+                # Force kill if still running after 2 seconds
+                time.sleep(2)
+                for pid in pids_to_kill:
+                    try:
+                        os.kill(pid, 0)  # Check if still running
+                        os.kill(pid, signal.SIGKILL)
+                        print(f"⚡ Force killed process {pid}")
+                    except ProcessLookupError:
+                        pass  # Already dead
+                    except PermissionError:
+                        pass  # Can't kill
+                        
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass  # pkill might not be available or no processes found
+            pass
         
         print("✅ Comprehensive cleanup completed")
 
@@ -106,95 +161,155 @@ class ApplicationWrapper:
             print(f"⚠️ Error checking for locks: {e}")
 
     async def start_background_services(self):
-        """Starts the OMOP Database Agent server as a background process."""
-        # The command now directly uses the installed script for the OMOP agent runner
-        command = [sys.executable, "-m", "med_a2a_omop.run_omop_agent"]
-        
-        # Set up environment to pass config file location
+        """Starts both the OMOP Database Agent and Semantic Agent servers as background processes."""
         env = os.environ.copy()
         if self.config.config_file:
             env['MEDA2A_CONFIG_FILE'] = str(self.config.config_file)
         
+        # Start OMOP Agent server
+        omop_command = [sys.executable, "-m", "med_a2a_omop.run_omop_agent"]
         print("🚀 Starting background OMOP Agent server...")
         self.omop_agent_process = subprocess.Popen(
-            command,
+            omop_command,
             cwd=self.project_root,
-            env=env,  # Pass the environment with config file path
+            env=env,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, # Redirect stderr to stdout
-            text=True,  # Decode stdout/stderr as text
-            bufsize=1,  # Line-buffered
-            universal_newlines=True # Ensure consistent newline handling
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
         )
         print(f"✅ OMOP Agent server started in background (PID: {self.omop_agent_process.pid})")
+
+        # Start Semantic Agent server  
+        semantic_command = [sys.executable, "-m", "med_a2a_omop.run_semantic_agent"]
+        print("🧠 Starting background Semantic Agent server...")
+        self.semantic_agent_process = subprocess.Popen(
+            semantic_command,
+            cwd=self.project_root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+        print(f"✅ Semantic Agent server started in background (PID: {self.semantic_agent_process.pid})")
+
+        # Start concurrent tasks to stream the output from both agents
+        output_streaming_task = asyncio.create_task(self._stream_subprocess_output())
+
+        # Wait for both servers to be ready
+        omop_ready = False
+        semantic_ready = False
         
-        # Wait for the server to be ready
-        server_ready = False
-        for attempt in range(30): # Try for 30 seconds
-            try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get("http://127.0.0.1:8002/.well-known/agent-card.json")
-                    if response.status_code == 200: # Or whatever indicates readiness
-                        server_ready = True
-                        break
-            except httpx.RequestError:
-                pass
+        for attempt in range(30):
+            print(f"[Attempt {attempt+1}/30] Checking if both Agent servers are ready...")
+            
+            # Check OMOP Agent
+            if not omop_ready:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        omop_config = self.config.get_omop_agent_config()
+                        agent_url = f"{omop_config['url']}/.well-known/agent-card.json"
+                        response = await client.get(agent_url)
+                        if response.status_code == 200:
+                            omop_ready = True
+                            print("✅ OMOP Agent server is ready!")
+                except httpx.RequestError:
+                    pass
+            
+            # Check Semantic Agent  
+            if not semantic_ready:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        semantic_url = f"http://{self.config.semantic_agent_host}:{self.config.semantic_agent_port}/.well-known/agent-card.json"
+                        response = await client.get(semantic_url)
+                        if response.status_code == 200:
+                            semantic_ready = True
+                            print("✅ Semantic Agent server is ready!")
+                except httpx.RequestError:
+                    pass
+            
+            # Both servers ready?
+            if omop_ready and semantic_ready:
+                print("🎉 Both Agent servers are ready!")
+                break
+                
+            if not omop_ready and not semantic_ready:
+                print("[DEBUG] Both servers not ready yet")
+            elif not omop_ready:
+                print("[DEBUG] OMOP Agent not ready yet")
+            elif not semantic_ready:
+                print("[DEBUG] Semantic Agent not ready yet")
+                
             await asyncio.sleep(1)
 
-        if not server_ready:
-            # Read any remaining output from the process
-            stdout_output = ""
-            stderr_output = ""
-            if self.omop_agent_process and self.omop_agent_process.stdout:
-                try:
-                    stdout_output = self.omop_agent_process.stdout.read()
-                except ValueError: # Raised if stream is closed
-                    pass
-            if self.omop_agent_process and self.omop_agent_process.stderr:
-                try:
-                    stderr_output = self.omop_agent_process.stderr.read()
-                except ValueError: # Raised if stream is closed
-                    pass
-
-            print(f"❌ OMOP Agent server failed to become ready! Exit Code: {self.omop_agent_process.returncode if self.omop_agent_process else 'N/A'}")
-            if stdout_output:
-                print(f"[OMOP Agent STDOUT]:\n{stdout_output}")
-            if stderr_output:
-                print(f"[OMOP Agent STDERR]:\n{stderr_output}")
+        if not (omop_ready and semantic_ready):
+            failed_services = []
+            if not omop_ready:
+                failed_services.append("OMOP Agent")
+            if not semantic_ready:
+                failed_services.append("Semantic Agent")
+            print(f"❌ {', '.join(failed_services)} server(s) failed to become ready!")
+            # The output streaming task will print the logs
+            await output_streaming_task # Wait for the streaming to finish
             raise RuntimeError("OMOP Agent server failed to start")
         else:
             print("✅ OMOP Agent server is running")
+            # We can cancel the streaming task now that the server is up
+            output_streaming_task.cancel()
 
     async def _stream_subprocess_output(self):
         """Streams output from the subprocess to the console."""
         print("[OMOP Agent Live Output]:")
         if self.omop_agent_process and self.omop_agent_process.stdout:
             while True:
-                line = await asyncio.to_thread(self.omop_agent_process.stdout.readline) # Use to_thread for blocking read
-                if not line:
+                char = await asyncio.to_thread(self.omop_agent_process.stdout.read, 1)
+                if not char:
                     break
-                print(f"    {line.strip()}")
-        print("[OMOP Agent Output Stream Ended]")
+                print(char, end='', flush=True)
+        print("\n[OMOP Agent Output Stream Ended]")
 
     def stop_background_services(self):
-        """Ensures the background server is cleanly terminated with enhanced cleanup."""
+        """Ensures both background servers are cleanly terminated with enhanced cleanup."""
+        # Stop OMOP Agent server
         if self.omop_agent_process:
             print(f"\n🛑 Stopping background OMOP Agent server (PID: {self.omop_agent_process.pid})...")
             try:
                 # First, try graceful termination
                 self.omop_agent_process.terminate()
                 self.omop_agent_process.wait(timeout=10)  # Increased timeout for cleanup
-                print("✅ Server stopped cleanly.")
+                print("✅ OMOP Agent server stopped cleanly.")
             except subprocess.TimeoutExpired:
-                print("⚠️ Server did not terminate in time, forcing shutdown.")
+                print("⚠️ OMOP Agent server did not terminate in time, forcing shutdown.")
                 self.omop_agent_process.kill()
                 try:
                     self.omop_agent_process.wait(timeout=5)
-                    print("✅ Server force-killed successfully.")
+                    print("✅ OMOP Agent server force-killed successfully.")
                 except subprocess.TimeoutExpired:
-                    print("❌ Failed to kill server process.")
+                    print("❌ Failed to kill OMOP Agent server process.")
             except Exception as e:
-                print(f"❌ Error stopping server: {e}")
+                print(f"❌ Error stopping OMOP Agent server: {e}")
+        
+        # Stop Semantic Agent server
+        if self.semantic_agent_process:
+            print(f"\n🛑 Stopping background Semantic Agent server (PID: {self.semantic_agent_process.pid})...")
+            try:
+                # First, try graceful termination
+                self.semantic_agent_process.terminate()
+                self.semantic_agent_process.wait(timeout=10)  # Increased timeout for cleanup
+                print("✅ Semantic Agent server stopped cleanly.")
+            except subprocess.TimeoutExpired:
+                print("⚠️ Semantic Agent server did not terminate in time, forcing shutdown.")
+                self.semantic_agent_process.kill()
+                try:
+                    self.semantic_agent_process.wait(timeout=5)
+                    print("✅ Semantic Agent server force-killed successfully.")
+                except subprocess.TimeoutExpired:
+                    print("❌ Failed to kill Semantic Agent server process.")
+            except Exception as e:
+                print(f"❌ Error stopping Semantic Agent server: {e}")
 
 class MedA2AInterface(ApplicationWrapper):
     """
@@ -209,6 +324,18 @@ class MedA2AInterface(ApplicationWrapper):
         
         self.orchestrator = None
         self.omop_client = None
+        
+    async def __aenter__(self):
+        """Context manager entry - initialize system."""
+        await self.initialize()
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - cleanup system."""
+        self.cleanup_all()
+        if exc_type is not None:
+            print(f"🚨 System exited due to exception: {exc_type.__name__}: {exc_val}")
+        return False  # Don't suppress exceptions
         
     async def initialize(self):
         """Initialize the system and start background services."""
@@ -231,6 +358,11 @@ class MedA2AInterface(ApplicationWrapper):
         
         print("✅ Environment validation passed")
         
+        # Clear any corrupted cache from previous runs
+        from .cache import clear_corrupted_cache
+        if clear_corrupted_cache():
+            print("🧹 Cleared corrupted cache from previous runs")
+        
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -246,12 +378,23 @@ class MedA2AInterface(ApplicationWrapper):
         omop_agent_url = f"{omop_agent_config['url'].rstrip('/')}/rpc"
 
         print(f"[DEBUG] Connecting to OMOP Agent at: {omop_agent_url}")
-        self.omop_client = A2AClient(httpx_client=httpx.AsyncClient(timeout=60.0), url=omop_agent_url)
+        
+        # Calculate total timeout: use max of (ollama + mcp + buffer) and (omop_agent_timeout + buffer)
+        basic_timeout = self.config.ollama_timeout + self.config.mcp_timeout + 30
+        omop_agent_timeout = self.config.omop_timeout + 60  # Add buffer for OMOP agent processing
+        total_timeout = max(basic_timeout, omop_agent_timeout)
+        self.omop_client = A2AClient(httpx_client=httpx.AsyncClient(timeout=total_timeout), url=omop_agent_url)
+        
+        # Connect to Semantic Agent
+        semantic_agent_url = f"http://{self.config.semantic_agent_host}:{self.config.semantic_agent_port}/rpc"
+        print(f"[DEBUG] Connecting to Semantic Agent at: {semantic_agent_url}")
+        self.semantic_client = A2AClient(httpx_client=httpx.AsyncClient(timeout=total_timeout), url=semantic_agent_url)
         
         self.orchestrator = OrchestratorAgent(
             agent_id="orchestrator-01",
             omop_agent_client=self.omop_client,
-            ollama_model=self.config.get_ollama_model()
+            semantic_agent_client=self.semantic_client,
+            model_name=self.config.orchestrator_model
         )
         
         print("✅ System initialized successfully!")

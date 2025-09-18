@@ -1,0 +1,4 @@
+[submodule "omcp_server"]
+	path = omcp_server
+	url = https://github.com/fastomop/omcp.git
+	branch = features-nmg-db-retry-logic

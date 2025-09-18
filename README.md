@@ -1,43 +1,51 @@
 # 🏥 Medical A2A OMOP - Intelligent Healthcare Data Query System
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OMOP CDM v5.4](https://img.shields.io/badge/OMOP_CDM-v5.4-green.svg)](https://ohdsi.github.io/CommonDataModel/)
 
-> **An intelligent multi-agent framework for natural language querying of OMOP Common Data Model (CDM) healthcare databases.**
+> **An intelligent multi-agent framework for natural language querying of OMOP Common Data Model (CDM) healthcare databases using advanced AI agents and semantic analysis.**
 
-**DISCLAIMER: This Repo is still under development please apologise any bugs or rapid changes. For bug reporting please contact k24118093@kcl.ac.uk**
-
-Transform complex medical questions into precise SQL queries using advanced AI agents, comprehensive OMOP CDM knowledge, and multiple interaction modes for maximum flexibility.
+**⚠️ DISCLAIMER: This system is under active development. For bug reports, contact k24118093@kcl.ac.uk**
 
 ## 🌟 **Key Features**
 
-### 🧠 **Intelligent Query Generation**
-- **Natural Language Processing**: Ask questions in plain English
-- **OMOP CDM v5.4 Expert Knowledge**: Complete understanding of healthcare data standards
-- **Iterative Learning**: System improves from database feedback and learns schema patterns
-- **World Model**: Comprehensive knowledge base of OMOP tables, relationships, and best practices
+### 🧠 **Intelligent Multi-Agent Architecture**
+- **Orchestrator Agent**: Coordinates workflow and manages complex queries
+- **Semantic Agent**: Handles medical terminology and concept mapping
+- **OMOP Database Agent**: Specialized text-to-SQL conversion with OMOP expertise
+- **Mixed Model Strategy**: Optimized LLM selection for different tasks
+- **A2A Medical Framework**: Built on the [A2A Medical Foundation Framework](https://github.com/fastomop/omcp_a2a/tree/feature/medical-a2a-framework)
 
 ### 🎯 **Multiple Interaction Modes**
-- **🖥️ Interactive CLI**: Real-time question-answer sessions with help system
-- **⚡ Command Line**: Direct single or multiple question processing
-- **📁 Batch Processing**: Process multiple questions from files (text/JSON)
+- **🖥️ Interactive CLI**: Real-time question-answer sessions
+- **⚡ Command Line**: Single or multiple question processing
+- **📁 Batch Processing**: Process questions from files (text/JSON)
 - **🔧 Programmatic API**: Python integration for applications
-- **📊 JSON Output**: Machine-readable results for data pipelines
+- **📊 Evaluation Framework**: Built-in system performance evaluation
 
-### 🏗️ **Multi-Agent Architecture**
-- **Orchestrator Agent**: Coordinates workflow and summarizes results
-- **OMOP Database Agent**: Specialized in text-to-SQL conversion and database interaction
+### 🚀 **Advanced Capabilities**
+- **OMOP CDM v5.4 Expert Knowledge**: Complete understanding of healthcare data standards
+- **Vocabulary Integration**: Fast RxNorm, SNOMED, and CPT4 concept mapping
+- **Semantic Analysis**: Medical terminology standardization and enhancement
 - **MCP Integration**: Secure database communication via Model Context Protocol
-
+- **Intelligent Caching**: SQL template learning and semantic pattern recognition
+- **Multi-Level Caching**: Query patterns, semantic analysis, vocabulary, and SQL templates
+- **Learning System**: Adapts from successful queries and concept mappings
 
 ## 🚀 **Quick Start**
+
+### Prerequisites
+- Python 3.13+
+- [Ollama](https://ollama.ai/) installed and running
+- Git (for cloning with submodules)
+- OMOP Vocabulary files (see vocabulary setup below)
 
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/fastomop/medA2A_implementation.git
+# Clone the repository with OMCP server (one command setup!)
+git clone --recursive https://github.com/fastomop/medA2A_implementation.git
 cd medA2A_implementation
 
 # Install dependencies using uv (recommended)
@@ -45,25 +53,71 @@ uv pip install -e .
 
 # Or using pip
 pip install -e .
+
+# That's it! The OMCP server is automatically included as a submodule
+# with the robust implementation for database lock prevention
+```
+
+**For existing repositories:**
+```bash
+# If you already cloned without --recursive, get the submodule:
+git submodule update --init --recursive
 ```
 
 ### Configuration
 
+1. **Generate configuration file:**
 ```bash
-# Create configuration file
-cp .medA2A.config.sample.json .medA2A.config.json
+med-a2a-setup --generate-config
+```
 
-# Edit the configuration file to set your OMCP server path
-# Example: "omcp_server_path": "/path/to/your/omcp_server"
+2. **Edit configuration (optional):**
+```json
+{
+  "services": {
+    "ollama_url": "http://localhost:11434",
+    "orchestrator_model": "llama3.1:8b",
+    "semantic_model": "gpt-oss:20b",
+    "omop_model": "gpt-oss:20b"
+  }
+}
+```
 
-# Validate your configuration
+3. **Validate setup:**
+```bash
 med-a2a-setup --check
+```
+
+**Note:** The OMCP server path is automatically detected from the submodule - no manual configuration needed!
+
+### Vocabulary Setup
+
+1. **Download OMOP Vocabulary** (required for medical concept mapping):
+   - Visit [OHDSI Athena](https://athena.ohdsi.org/)
+   - Download vocabulary files (RxNorm, SNOMED, CPT4, etc.)
+   - Extract to one of these locations:
+     - `~/Downloads/omop_vocab_current/` (auto-detected)
+     - `~/omop_vocabulary/` (auto-detected)
+     - Custom path via configuration
+
+2. **Configure vocabulary path (optional):**
+```json
+{
+  "paths": {
+    "vocabulary_path": "/path/to/your/omop_vocabulary"
+  }
+}
+```
+
+3. **Environment variable (alternative):**
+```bash
+export OMOP_VOCABULARY_PATH=/path/to/omop_vocabulary
 ```
 
 ### Basic Usage
 
 ```bash
-# Interactive mode (default) - Start asking questions immediately
+# Interactive mode (default)
 run-med-a2a
 
 # Single question
@@ -75,8 +129,10 @@ run-med-a2a -q "How many patients have diabetes?" -q "What drugs are prescribed 
 # Batch processing from file
 run-med-a2a --batch example_questions.txt --output results.json
 
-# Get help and examples
-run-med-a2a --examples
+# System evaluation
+med-a2a-eval --limit 10
+
+# Get help
 run-med-a2a --help
 ```
 
@@ -110,7 +166,7 @@ WHERE c.standard_concept = 'S'
 ### Programmatic API
 ```python
 import asyncio
-from src.med_a2a_omop.runner import MedA2AAPI
+from med_a2a_omop.runner import MedA2AAPI
 
 async def main():
     async with MedA2AAPI() as api:
@@ -147,48 +203,83 @@ $ run-med-a2a --batch medical_questions.txt --output results.json
 💾 Results saved to results.json
 ```
 
-## 🏗️ **Architecture**
+### System Evaluation
 
-### System Components
+1. **Prepare evaluation dataset:**
+   - Create a JSON file with questions and expected results
+   - See `example_questions.json` for format reference
 
+2. **Run evaluation:**
+```bash
+# Run evaluation with your dataset
+med-a2a-eval --dataset your_evaluation_data.json
+
+# Limit to first 10 questions for testing
+med-a2a-eval --dataset your_evaluation_data.json --limit 10
+
+# Specify custom output directory
+med-a2a-eval --dataset your_evaluation_data.json --output my_results/
+
+# Verbose output
+med-a2a-eval --dataset your_evaluation_data.json --verbose
+```
+
+3. **View results:**
+```bash
+# Show evaluation results
+cat evaluation_results/evaluation_results_*.json
+
+# View human-readable report
+cat evaluation_results/evaluation_report_*.txt
+```
+
+## 🏗️ **System Architecture**
+
+### Multi-Agent Workflow
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   User Input    │───▶│  Orchestrator    │───▶│ OMOP Database   │
-│  (CLI/API/File) │    │     Agent        │    │     Agent       │
+│   User Input    │───▶│  Orchestrator    │───▶│ Semantic Agent  │
+│  (CLI/API/File) │    │     Agent        │    │   (Terminology) │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                               │                         │
                               ▼                         ▼
-                       ┌──────────────┐       ┌─────────────────┐
-                       │ Summarization│       │ Text-to-SQL +   │
-                       │   & Results  │       │ MCP Integration │
-                       └──────────────┘       └─────────────────┘
-                                                       │
-                                                       ▼
-                                              ┌─────────────────┐
-                                              │ OMOP Database   │
-                                              │ (via MCP Server)│
-                                              └─────────────────┘
+                       ┌──────────────────┐    ┌─────────────────┐
+                       │ OMOP Database    │◀───│ Vocabulary &    │
+                       │     Agent        │    │ Concept Mapping │
+                       │  (Text-to-SQL)   │    └─────────────────┘
+                       └──────────────────┘
+                              │
+                              ▼
+                       ┌─────────────────┐
+                       │ OMOP Database   │
+                       │ (via MCP Server)│
+                       └─────────────────┘
 ```
 
+### Mixed Model Strategy
+- **Orchestrator Agent**: `llama3.1:8b` (fast, efficient for planning)
+- **Semantic Agent**: `gpt-oss:20b` or configured model (powerful for medical terminology)
+- **OMOP Database Agent**: `gpt-oss:20b` or configured model (complex SQL generation)
+
 ### Key Technologies
-- **🐍 Python 3.11+**: Modern async/await patterns
+- **🐍 Python 3.13+**: Modern async/await patterns
 - **🤖 Ollama**: Local LLM for text-to-SQL conversion
 - **📡 A2A Protocol**: Agent-to-Agent communication
+- **🏥 A2A Medical Foundation**: Medical-specific agent framework
 - **🔗 MCP (Model Context Protocol)**: Secure database communication
 - **🦆 DuckDB**: High-performance analytical database
 - **📊 OMOP CDM v5.4**: Healthcare data standardization
 
 ## 🎯 **Command Line Options**
 
-| Option | Short | Description | Example |
-|--------|-------|-------------|---------|
-| `--question` | `-q` | Ask specific question(s) | `-q "How many patients have diabetes?"` |
-| `--batch` | | Process questions from file | `--batch questions.txt` |
-| `--output` | `-o` | Save results to JSON file | `--output results.json` |
-| `--json` | | Output in JSON format | `--json` |
-| `--interactive` | `-i` | Start interactive mode | `--interactive` |
-| `--examples` | | Show example questions | `--examples` |
-| `--help` | `-h` | Show help message | `--help` |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `run-med-a2a` | Start interactive mode | `run-med-a2a` |
+| `run-med-a2a -q "question"` | Ask specific question | `-q "How many patients have diabetes?"` |
+| `run-med-a2a --batch file.txt` | Process questions from file | `--batch questions.txt` |
+| `run-med-a2a --output results.json` | Save results to file | `--output results.json` |
+| `med-a2a-eval --dataset <file>` | Run system evaluation | `med-a2a-eval --dataset data.json --limit 10` |
+| `med-a2a-setup --check` | Validate configuration | `med-a2a-setup --check` |
 
 ## 📁 **Project Structure**
 
@@ -197,122 +288,127 @@ medA2A_implementation/
 ├── src/
 │   └── med_a2a_omop/
 │       ├── agents/
-│       │   ├── omop_database_agent.py    # OMOP-specialized agent with world model
-│       │   └── orchestrator_agent.py     # Workflow coordination
+│       │   ├── orchestrator_agent.py     # Workflow coordination
+│       │   ├── semantic_agent.py         # Medical terminology & concepts
+│       │   └── omop_database_agent.py    # Text-to-SQL conversion
 │       ├── models/
 │       │   └── a2a_messages.py          # Message schemas
-│       ├── runner.py                    # Main application with multiple interfaces
-│       └── run_omop_agent.py           # OMOP agent server
-├── omcp_wrapper.py                     # MCP server wrapper script
-├── example_questions.txt               # Sample questions (text format)
-├── example_questions.json              # Sample questions (JSON format)
-├── example_api_usage.py               # API usage examples
-├── USAGE_GUIDE.md                     # Comprehensive usage documentation
-├── pyproject.toml                     # Project configuration
-└── README.md                          # This file
+│       ├── vocabulary_fast.py           # Fast OMOP vocabulary integration
+│       ├── config.py                    # Configuration management
+│       ├── runner.py                    # Main application interface
+│       ├── evaluate_system.py           # System evaluation framework
+│       └── setup.py                     # Setup and validation
+├── omcp_server/                         # OMCP server submodule (automatic!)
+│   ├── src/omcp/
+│   │   ├── main_robust.py              # Robust server with DB lock prevention
+│   │   ├── db_robust.py                # Database connection with retry logic
+│   │   └── main.py                     # Standard server
+│   └── pyproject.toml
+├── .medA2A.config.json                  # Configuration file
+├── example_questions.txt                # Sample questions
+├── evaluation_results/                  # Evaluation output
+└── README.md                           # This file
 ```
-
-## 🧠 **OMOP CDM World Model**
-
-The system includes a comprehensive world model with:
-
-### **📚 Complete OMOP CDM v5.4 Knowledge**
-- **Standard Tables**: Person, Condition, Drug, Measurement, Observation, etc.
-- **Vocabulary Integration**: SNOMED, ICD-10, RxNorm, LOINC
-- **Relationships**: Foreign keys, business rules, common join patterns
-- **Domain Logic**: Clinical domains and concept hierarchies
-
-### **🎯 Intelligent Query Templates**
-- **Patient Counting**: Count distinct patients with conditions
-- **Drug Analysis**: Medication usage and prescription patterns  
-- **Measurement Analysis**: Lab results and vital signs
-- **Comorbidity Analysis**: Multiple condition combinations
-
-### **📈 Adaptive Learning**
-- **Schema Discovery**: Automatically explores actual database structure
-- **Error Learning**: Learns from failed queries and database feedback
-- **Pattern Recognition**: Identifies successful query patterns
-- **Iterative Refinement**: Up to 10 attempts with progressive learning
 
 ## 🔧 **Configuration**
 
-### Configuration Files
-
-The system uses a JSON configuration file for explicit path management:
-
+### Configuration File (.medA2A.config.json)
 ```json
 {
-  "paths": {
-    "omcp_server_path": "/path/to/omcp_server"
-  },
   "services": {
     "ollama_url": "http://localhost:11434",
-    "ollama_model": "llama3.1:8b"  
+    "orchestrator_model": "llama3.1:8b",
+    "orchestrator_timeout": 30,
+    "semantic_model": "gpt-oss:20b",
+    "semantic_timeout": 180,
+    "omop_model": "gpt-oss:20b",
+    "omop_timeout": 240,
+    "mcp_timeout": 10
+  },
+  "agent_config": {
+    "omop_agent_host": "127.0.0.1",
+    "omop_agent_port": 8003
+  },
+  "database": {
+    "db_type": "duckdb",
+    "cdm_schema": "base",
+    "vocab_schema": "base"
   }
 }
 ```
 
-**Setup options:**
-- Copy sample: `cp .medA2A.config.sample.json .medA2A.config.json`
-- Generate template: `med-a2a-setup --generate-config`
+**Simplified Setup:** The OMCP server is now automatically detected from the git submodule, so no manual path configuration is needed!
 
-### Environment Variables
-
-Alternative configuration via environment variables:
-
+### Environment Variables (Alternative)
 ```bash
-# Required
-export OMCP_SERVER_PATH=/path/to/omcp_server
-
-# Optional services
+# Optional services (OMCP server path auto-detected from submodule)
 export OLLAMA_URL=http://localhost:11434
 export OLLAMA_MODEL=llama3.1:8b
 
-# Optional agent configuration  
+# Vocabulary path (optional - auto-detected if in standard locations)
+export OMOP_VOCABULARY_PATH=/path/to/omop_vocabulary
+
+# Agent configuration
 export OMOP_AGENT_HOST=127.0.0.1
-export OMOP_AGENT_PORT=8002
+export OMOP_AGENT_PORT=8003
 ```
-
-**Note:** The OMCP server handles its own database configuration independently.
-
-### Dependencies
-Key dependencies are managed in `pyproject.toml`:
-- `a2a-medical-foundation`: Core medical agent framework
-- `ollama`: LLM integration
-- `fastapi`: Web framework for agents
-- `httpx`: HTTP client for agent communication
-- `uvicorn`: ASGI server
 
 ## 🚨 **Troubleshooting**
 
 ### Common Issues
 
-**Database Locks**
+**Configuration Validation**
 ```bash
-# The system automatically handles database locks, but if issues persist:
-🔍 Checking for existing database locks...
-✅ No existing database locks found
+# Check system configuration
+med-a2a-setup --check
+
+# Generate new configuration
+med-a2a-setup --generate-config
 ```
 
 **Agent Connection Issues**
 ```bash
-# Check if all services are running:
+# Check if services are running
 ❌ OMOP Agent server failed to become ready!
 # Solution: Check logs and ensure no port conflicts
 ```
 
+**Database Connection Issues**
+```bash
+# Check MCP server configuration
+# Ensure database path is correct in .medA2A.config.json
+# Verify OMCP server is properly configured
+```
+
 **Query Generation Issues**
 ```bash
-# The system learns from failures:
+# The system learns from failures automatically
 [OMOPDatabaseAgent] Attempting to refine SQL (attempt 2 of 10)
-# The world model will adapt and improve subsequent queries
+# The world model adapts and improves subsequent queries
 ```
 
 ### Getting Help
 1. **Interactive Help**: Type `help` in interactive mode
-2. **Examples**: Run `run-med-a2a --examples`
-3. **Documentation**: See `USAGE_GUIDE.md` for comprehensive documentation
-4. **API Examples**: Check `example_api_usage.py`
+2. **Configuration Check**: Run `med-a2a-setup --check`
+3. **Evaluation**: Create test dataset and run `med-a2a-eval --dataset test.json --limit 5`
+4. **Logs**: Check console output for detailed error messages
+
+## 📊 **Performance & Evaluation**
+
+### Current Performance Metrics
+- **Accuracy**: ~84% exact matches
+- **Success Rate**: 100% (no failed queries)
+- **Average Response Time**: ~49 seconds
+- **Mixed Model Strategy**: Optimized for speed vs accuracy balance
+
+### Evaluation Framework
+```bash
+# Run evaluation with your dataset
+med-a2a-eval --dataset evaluation_data.json --limit 10
+
+# View results
+cat evaluation_results/evaluation_results_*.json
+```
 
 ## 🤝 **Contributing**
 
@@ -342,16 +438,18 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **OHDSI Community**: For the OMOP Common Data Model standard
 - **A2A Protocol**: For agent communication framework
+- **A2A Medical Foundation Framework**: The underlying framework for medical agent systems
 - **Model Context Protocol**: For secure database integration
 - **Ollama**: For local LLM capabilities
 
 ## 📞 **Support**
 
 For questions, issues, or contributions:
-1. Check the [USAGE_GUIDE.md](USAGE_GUIDE.md) for detailed documentation
-2. Review example files for implementation patterns
-3. Open an issue for bugs or feature requests
+1. Check the configuration with `med-a2a-setup --check`
+2. Run evaluation to test system: `med-a2a-eval --limit 5`
+3. Review console output for detailed error messages
+4. Open an issue for bugs or feature requests
 
 ---
 
-**🎯 Ready to transform your healthcare data queries? Start with `run-med-a2a` and experience intelligent medical data analysis!** 
+**🎯 Ready to transform your healthcare data queries? Start with `run-med-a2a` and experience intelligent medical data analysis!**

@@ -202,7 +202,7 @@ def configure_environment(config, env_file):
     # Add defaults for other settings
     env_vars.update({
         "OLLAMA_URL": config.get_ollama_url(),
-        "OLLAMA_MODEL": config.get_ollama_model(),
+        "OLLAMA_MODEL": config.ollama_model_name,
         "OMOP_AGENT_HOST": "127.0.0.1",
         "OMOP_AGENT_PORT": "8002",
         "DB_TYPE": "duckdb",
