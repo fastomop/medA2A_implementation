@@ -59,7 +59,6 @@ uv pip install -e .
 pip install -e .
 
 # That's it! The OMCP server is automatically included as a submodule
-# with the robust implementation for database lock prevention
 ```
 
 **For existing repositories:**
