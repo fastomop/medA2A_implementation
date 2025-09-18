@@ -278,7 +278,69 @@ cd "{omcp_path}"
         os.chmod(wrapper_path, st.st_mode | stat.S_IEXEC)
         
         return wrapper_path
-    
+
+    def create_python_wrapper_script(self) -> Path:
+        """Create a Python wrapper script for running the OMCP server via MCP."""
+        omcp_path = self.get_omcp_server_path()
+        if not omcp_path:
+            raise ValueError("OMCP server path not configured")
+
+        # Build environment variables for the wrapper
+        synthea_db = omcp_path / "synthetic_data" / "synthea.duckdb"
+        if synthea_db.exists():
+            db_type = "duckdb"
+            db_path = str(synthea_db)
+        else:
+            db_type = os.getenv("DB_TYPE", "duckdb")
+            db_path = os.getenv("DB_PATH", str(self.project_root / "omop.duckdb"))
+
+        wrapper_content = f'''#!/usr/bin/env python3
+"""Auto-generated Python wrapper for OMCP server MCP integration."""
+import subprocess
+import sys
+import os
+
+def main():
+    # Change to OMCP server directory
+    os.chdir("{omcp_path}")
+
+    # Set up environment
+    env = os.environ.copy()
+    env.update({{
+        "DB_TYPE": "{db_type}",
+        "DB_PATH": "{db_path}",
+        "CDM_SCHEMA": "base",
+        "VOCAB_SCHEMA": "base",
+        "MCP_HOST": "localhost",
+        "MCP_PORT": "8080"
+    }})
+
+    # Run UV command
+    uv_cmd = "{self.get_uv_executable() or 'uv'}"
+    cmd = [uv_cmd, "run", "python", "src/omcp/main.py"] + sys.argv[1:]
+
+    try:
+        result = subprocess.run(cmd, env=env, check=False)
+        sys.exit(result.returncode)
+    except Exception as e:
+        print(f"Error running OMCP server: {{e}}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+'''
+
+        wrapper_path = self.project_root / "omcp_wrapper_mcp.py"
+        with open(wrapper_path, 'w') as f:
+            f.write(wrapper_content)
+
+        # Make executable
+        import stat
+        st = os.stat(wrapper_path)
+        os.chmod(wrapper_path, st.st_mode | stat.S_IEXEC)
+
+        return wrapper_path
+
     # =================== SERVICE CONFIGURATION ===================
     
     def get_ollama_url(self) -> str:

@@ -81,15 +81,15 @@ async def main():
     sig = inspect.signature(MCPServer.__init__)
     logger.info(f"MCPServer constructor signature: {sig}")
 
-    # Use the wrapper script for more reliable execution
-    wrapper_script = config.project_root / "scripts" / "omcp_wrapper.py"
-    
+    # Use the config system to create a proper Python wrapper script for MCP
+    wrapper_path = config.create_python_wrapper_script()
+
     adapted_servers = [MCPServer(
         name=server.name,
-        description="OMOP Database MCP Server", 
-        url=f"stdio://{wrapper_script}",
-        args=[],  # Wrapper handles all arguments internally
-        env={},   # Wrapper handles environment internally
+        description="OMOP Database MCP Server",
+        url=f"stdio://{wrapper_path}",
+        args=[],
+        env={},
         working_dir=str(config.project_root)
     ) for server in mcp_servers]
 

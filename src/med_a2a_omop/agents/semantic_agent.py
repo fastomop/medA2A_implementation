@@ -487,8 +487,11 @@ Be precise about medical terminology and OMOP domain classification.
     
     def _enhance_with_concept_codes(self, semantic_analysis: Dict[str, Any]):
         """Enhance semantic analysis with OMOP vocabulary concept codes using smart selection."""
+        print(f"[Semantic Agent] 🧬 Starting concept code enhancement...")
         try:
             if 'medical_concepts' in semantic_analysis:
+                concept_count = len(semantic_analysis['medical_concepts'])
+                print(f"[Semantic Agent] 📝 Processing {concept_count} medical concepts for enhancement")
                 for concept in semantic_analysis['medical_concepts']:
                     original_term = concept.get('original_term', '')
                     concept_type = concept.get('concept_type', '')
@@ -497,7 +500,7 @@ Be precise about medical terminology and OMOP domain classification.
                     best_match = self._find_best_concept_match(original_term, concept_type, concept)
                     
                     if best_match:
-                        concept['rxnorm_concept_code'] = best_match.concept.concept_code
+                        concept['concept_code'] = best_match.concept.concept_code
                         concept['vocabulary_id'] = best_match.concept.vocabulary_id
                         concept['concept_id'] = best_match.concept.concept_id
                         concept['search_strategy'] = 'vocabulary_lookup'
@@ -577,9 +580,16 @@ Be precise about medical terminology and OMOP domain classification.
                 logger.info("Loading fast OMOP vocabulary for first use...")
                 self.vocabulary_index = get_fast_vocabulary()
                 self._vocabulary_initialized = True
-                logger.info("✅ Fast OMOP vocabulary loaded")
+                if self.vocabulary_index:
+                    concept_count = len(self.vocabulary_index.concepts)
+                    logger.info(f"✅ Fast OMOP vocabulary loaded with {concept_count} concepts")
+                    print(f"[Semantic Agent] 📚 Vocabulary loaded: {concept_count} concepts available")
+                else:
+                    logger.warning("Vocabulary index is None after loading")
+                    print(f"[Semantic Agent] ⚠️ Vocabulary index is None after loading")
             except Exception as e:
                 logger.warning(f"Failed to load vocabulary, concept codes will be unavailable: {e}")
+                print(f"[Semantic Agent] ❌ Vocabulary loading failed: {e}")
                 self.vocabulary_index = None
                 self._vocabulary_initialized = True  # Mark as initialized to avoid retrying
     
@@ -628,8 +638,27 @@ Be precise about medical terminology and OMOP domain classification.
                     return self._select_best_drug_concept(fallback_matches, prefer_specificity=False)
                 
             elif concept_type == 'condition':
-                matches = self.vocabulary_index.get_condition_concepts(original_term, limit=3)
-                return matches[0] if matches else None
+                print(f"[Semantic Agent] 🏥 Searching for condition: '{original_term}'")
+
+                # PRIORITY 1: Try exact match for original term first
+                original_matches = self.vocabulary_index.get_condition_concepts(original_term.strip(), limit=3)
+
+                if original_matches:
+                    print(f"[Semantic Agent] ✅ Found {len(original_matches)} matches for original term '{original_term}'")
+                    return original_matches[0]  # Take the first match
+
+                # PRIORITY 2: Try standardized term if different from original
+                standardized_term = concept_data.get('standardized_term', '')
+                if standardized_term and standardized_term.lower() != original_term.lower():
+                    print(f"[Semantic Agent] 🔄 Trying standardized term: '{standardized_term}'")
+                    standardized_matches = self.vocabulary_index.get_condition_concepts(standardized_term.strip(), limit=3)
+
+                    if standardized_matches:
+                        print(f"[Semantic Agent] ✅ Found match via standardized term '{standardized_term}': {standardized_matches[0].concept.concept_name}")
+                        return standardized_matches[0]
+
+                print(f"[Semantic Agent] ❌ No vocabulary matches found for condition '{original_term}'")
+                return None
             else:
                 # General search with domain filtering
                 domain_map = {
@@ -763,14 +792,23 @@ Be precise about medical terminology and OMOP domain classification.
         try:
             # Ensure vocabulary is loaded
             self._ensure_vocabulary_loaded()
-            
+
+            print(f"[Semantic Agent] 🔍 Searching vocabulary for '{term}' (type: {concept_type})")
+
             if not self.vocabulary_index:
+                print(f"[Semantic Agent] ❌ No vocabulary index available")
                 return []
-            
+
             if concept_type == 'drug':
-                return self.vocabulary_index.get_drug_concepts(term, limit=3)
+                results = self.vocabulary_index.get_drug_concepts(term, limit=3)
+                print(f"[Semantic Agent] 💊 Drug search for '{term}': found {len(results)} matches")
+                return results
             elif concept_type == 'condition':
-                return self.vocabulary_index.get_condition_concepts(term, limit=3)
+                results = self.vocabulary_index.get_condition_concepts(term, limit=3)
+                print(f"[Semantic Agent] 🏥 Condition search for '{term}': found {len(results)} matches")
+                for i, match in enumerate(results[:3]):
+                    print(f"  {i+1}. {match.concept.concept_name} (code: {match.concept.concept_code}, confidence: {match.confidence:.3f})")
+                return results
             else:
                 # General search with domain filtering
                 domain_map = {
