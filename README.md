@@ -37,7 +37,8 @@
 
 ### Prerequisites
 - Python 3.13+
-- [Ollama](https://ollama.ai/) installed and running
+- [UV package manager](https://docs.astral.sh/uv/) (recommended) or pip
+- [Ollama](https://ollama.ai/) installed and running with required models
 - Git (for cloning with submodules)
 - OMOP Vocabulary files (see vocabulary setup below)
 
@@ -62,6 +63,21 @@ pip install -e .
 ```bash
 # If you already cloned without --recursive, get the submodule:
 git submodule update --init --recursive
+
+# To update submodule to latest version:
+git submodule update --remote omcp_server
+```
+
+### Required Ollama Models
+
+Install the required models for optimal performance:
+```bash
+# Install required models
+ollama pull llama3.1:8b          # For orchestrator (fast planning)
+ollama pull gpt-oss:20b          # For semantic analysis and SQL generation (if available)
+
+# Start Ollama service
+ollama serve
 ```
 
 ### Configuration

@@ -531,7 +531,7 @@ Be precise about medical terminology and OMOP domain classification.
                                         # Use smart selection for fallback matches too
                                         best_fallback = self._select_best_drug_concept(fallback_matches)
                                         if best_fallback:
-                                            concept['rxnorm_concept_code'] = best_fallback.concept.concept_code
+                                            concept['concept_code'] = best_fallback.concept.concept_code
                                             concept['vocabulary_id'] = best_fallback.concept.vocabulary_id
                                             concept['concept_id'] = best_fallback.concept.concept_id
                                             concept['search_strategy'] = 'vocabulary_fallback'
@@ -540,16 +540,16 @@ Be precise about medical terminology and OMOP domain classification.
                                             break
                             
                             # Last resort: check learned patterns (but don't hallucinate)
-                            if 'rxnorm_concept_code' not in concept and isinstance(self.world_model, SemanticWorldModel):
+                            if 'concept_code' not in concept and isinstance(self.world_model, SemanticWorldModel):
                                 core_drug = concept.get('core_drug_name') or concept.get('standardized_term')
                                 if core_drug:
                                     learned_code = self.world_model.get_concept_code_suggestion(core_drug)
                                     if learned_code and learned_code != 'unknown':  # Prevent hallucinations
-                                        concept['rxnorm_concept_code'] = learned_code
+                                        concept['concept_code'] = learned_code
                                         concept['search_strategy'] = 'learned_verified'
                                         print(f"[Semantic Agent] 📚 Enhanced '{core_drug}' with verified learned code: {learned_code}")
                         
-                        if 'rxnorm_concept_code' not in concept:
+                        if 'concept_code' not in concept:
                             # Enhanced fallback: provide structured search guidance for OMOP agent
                             core_name = concept.get('core_drug_name') or concept.get('standardized_term') or original_term
                             
