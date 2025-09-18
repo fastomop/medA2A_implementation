@@ -573,10 +573,15 @@ Be precise about medical terminology and OMOP domain classification.
     def _ensure_vocabulary_loaded(self):
         """Ensure fast vocabulary is loaded (lazy initialization)."""
         if not self._vocabulary_initialized:
-            logger.info("Loading fast OMOP vocabulary for first use...")
-            self.vocabulary_index = get_fast_vocabulary()
-            self._vocabulary_initialized = True
-            logger.info("✅ Fast OMOP vocabulary loaded")
+            try:
+                logger.info("Loading fast OMOP vocabulary for first use...")
+                self.vocabulary_index = get_fast_vocabulary()
+                self._vocabulary_initialized = True
+                logger.info("✅ Fast OMOP vocabulary loaded")
+            except Exception as e:
+                logger.warning(f"Failed to load vocabulary, concept codes will be unavailable: {e}")
+                self.vocabulary_index = None
+                self._vocabulary_initialized = True  # Mark as initialized to avoid retrying
     
     def _find_best_concept_match(self, original_term: str, concept_type: str, concept_data: Dict[str, Any]) -> Optional['FastMatch']:
         """Find the best concept match preserving original term specificity when available."""
@@ -888,7 +893,7 @@ Be precise about medical terminology and OMOP domain classification.
             
             # Use the existing handler logic
             result = await self._handle_semantic_message(message_text)
-            
+
             # Return a proper Message response
             response_text = json.dumps(result)
             

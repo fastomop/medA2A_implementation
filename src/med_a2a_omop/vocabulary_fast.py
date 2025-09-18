@@ -37,20 +37,35 @@ class FastVocabularyIndex:
     """Ultra-fast vocabulary index for essential medical concepts."""
     
     def __init__(self, vocab_path: Optional[str] = None):
-        # Import here to avoid circular import
-        from .config import get_config
-
         if vocab_path is None:
-            config = get_config()
-            configured_path = config.get_vocabulary_path()
-            if configured_path is None:
-                raise ValueError(
-                    "OMOP vocabulary path not found. Please:\n"
-                    "1. Set 'vocabulary_path' in .medA2A.config.json, or\n"
-                    "2. Set OMOP_VOCABULARY_PATH environment variable, or\n"
-                    "3. Place vocabulary files in ~/Downloads/omop_vocab_current/"
-                )
-            vocab_path = str(configured_path)
+            try:
+                # Import here to avoid circular import
+                from .config import get_config
+                config = get_config()
+                configured_path = config.get_vocabulary_path()
+                if configured_path is None:
+                    raise ValueError(
+                        "OMOP vocabulary path not found. Please:\n"
+                        "1. Set 'vocabulary_path' in .medA2A.config.json, or\n"
+                        "2. Set OMOP_VOCABULARY_PATH environment variable, or\n"
+                        "3. Place vocabulary files in ~/Downloads/omop_vocab_current/"
+                    )
+                vocab_path = str(configured_path)
+            except Exception as e:
+                # Fallback to common locations if config fails
+                import os
+                fallback_paths = [
+                    os.path.expanduser("~/Downloads/omop_vocab_current"),
+                    os.path.expanduser("~/omop_vocabulary"),
+                    os.path.join(os.getcwd(), "omcp_server", "vocabulary") if os.path.exists(os.path.join(os.getcwd(), "omcp_server")) else None
+                ]
+
+                for path in fallback_paths:
+                    if path and os.path.exists(path) and os.path.exists(os.path.join(path, "CONCEPT.csv")):
+                        vocab_path = path
+                        break
+                else:
+                    raise ValueError(f"Configuration failed ({e}) and no vocabulary found in fallback locations: {fallback_paths}")
 
         self.vocab_path = Path(vocab_path)
         
