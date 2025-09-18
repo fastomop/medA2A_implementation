@@ -45,11 +45,14 @@
 ### Installation
 
 ```bash
-# Clone the repository with OMCP server (one command setup!)
+# Clone the repository with OMCP server 
 git clone --recursive https://github.com/fastomop/medA2A_implementation.git
 cd medA2A_implementation
+git submodule update --init --recursive
 
 # Install dependencies using uv (recommended)
+uv venv .venv
+source .venv/bin/activate
 uv pip install -e .
 
 # Or using pip
