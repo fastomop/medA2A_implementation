@@ -154,7 +154,7 @@ med-a2a-eval --limit 10
 run-med-a2a --help
 ```
 
-## 📖 **Usage Examples**
+## **Usage Examples**
 
 ### Interactive Mode
 ```bash
@@ -447,7 +447,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Model Context Protocol**: For secure database integration
 - **Ollama**: For local LLM capabilities
 
-## 📞 **Support**
+## **Support**
 
 For questions, issues, or contributions:
 1. Check the configuration with `med-a2a-setup --check`
