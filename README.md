@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OMOP CDM v5.4](https://img.shields.io/badge/OMOP_CDM-v5.4-green.svg)](https://ohdsi.github.io/CommonDataModel/)
 
-> **An intelligent multi-agent framework for natural language querying of OMOP Common Data Model (CDM) healthcare databases using advanced AI agents and semantic analysis.**
+> **An intelligent multi-agent framework for natural language querying of OMOP Common Data Model (CDM) healthcare databases using agents and semantic analysis.**
 
 **DISCLAIMER: This system is under active development. For bug reports, contact k24118093@kcl.ac.uk**
 
