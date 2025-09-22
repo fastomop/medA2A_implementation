@@ -1,0 +1,162 @@
+================================================================================
+MEDICAL A2A OMOP SYSTEM EVALUATION REPORT
+================================================================================
+
+Timestamp: 20250913_225906
+Dataset: dataset_generated.json
+
+OVERALL METRICS
+----------------------------------------
+Total Queries: 50
+Successful Queries: 50 (100.0%)
+Failed Queries: 0
+
+ACCURACY METRICS
+----------------------------------------
+Exact Matches: 46 (92.0% of successful)
+Partial Matches: 1 (2.0% of successful)
+No Matches: 3
+Overall Accuracy: 94.0%
+
+PERFORMANCE METRICS
+----------------------------------------
+Average Response Time: 49.11s
+Median Response Time: 35.78s
+Min Response Time: 6.97s
+Max Response Time: 230.53s
+
+
+MISMATCHED QUERIES ANALYSIS
+----------------------------------------
+Query 6: Counts of patients taking drug lisinopril 10 MG Oral Tablet and NDA020503 200 ACTUAT albuterol 0.09 
+  Expected: [[1]]
+  Got: **Based on the query results, there are no patients who have taken both lisinopril 10 MG Oral Tablet and NDA020503 200 ACTUAT albuterol 0.09 MG/ACTUAT Metered Dose Inhaler within a 30-day window.**
+
+Key findings:
+
+• **No co-exposure detected**: Despite searching the database, no patients were found to have taken both medications within the specified timeframe.
+• **Query results consistent**: Both query steps yielded identical results, indicating that the absence of co-exposed patients is not an artifact of the query process.
+
+Limitations and considerations:
+• **Data availability**: The analysis relies on accurate and complete data in the drug_exposure table. Any gaps or inaccuracies may affect the results.
+• **Temporal relationship**: The 30-day window may not capture all instances where both medications were taken, potentially leading to an underestimation of co-exposed patients.
+
+In conclusion, based on the query results and analysis, there is no evidence to suggest that any patients have taken both lisinopril 10 MG Oral Tablet and NDA020503 200 ACTUAT albuterol 0.09 MG/ACTUAT Metered Dose Inhaler within a 30-day period.
+  Match Score: 0.00
+
+Query 11: Counts of patients with Impaired glucose tolerance and Chronic sinusitis within 90 days.
+  Expected: [[1]]
+  Got: **Based on the query results, there are no patients with both Impaired glucose tolerance and Chronic sinusitis within 90 days.**
+
+Key findings:
+
+• **No co-occurrence**: Despite searching for patients with both conditions within 90 days, no matches were found.
+• **Impaired glucose tolerance prevalence**: The condition concept ID for Impaired glucose tolerance is 440545, but the query results do not provide information on its overall prevalence in the population.
+• **Chronic sinusitis prevalence**: Similarly, the condition concept ID for Chronic sinusitis is 3800010, but again, the query results do not offer insights into its overall frequency.
+
+**Limitations and considerations:**
+
+• The query's focus on co-occurrence within a specific time frame (90 days) might have contributed to the lack of matches.
+• The absence of patients with both conditions does not necessarily imply that they never occur together; it may indicate that this particular combination is rare or underreported in the dataset.
+
+**Recommendations for further analysis:**
+
+• Investigate the overall prevalence of Impaired glucose tolerance and Chronic sinusitis separately, using different queries to gather more comprehensive information.
+• Consider expanding the time frame or adjusting the query strategy to capture potential co-occurrences that might have been missed.
+  Match Score: 0.00
+
+Query 21: How many patients are taking acetaminophen 325 MG Oral Tablet?
+  Expected: [[4]]
+  Got: **Answer:** There are 3 patients currently taking acetaminophen 325 MG Oral Tablet.
+
+**Key Findings:**
+
+• **Patient Count:** 3 patients have been exposed to this specific drug formulation.
+• **Drug Concept ID:** The corresponding Drug Concept ID is 1127433, which matches the standardized term "Acetaminophen 325 mg Oral Tablet".
+• **Distinct Patient IDs:** The count of distinct person_ids indicates that these 3 patients are unique individuals.
+
+**Limitations:**
+
+• This analysis only considers exposure to this specific drug formulation and does not account for other acetaminophen formulations or dosages.
+• The data may not reflect the most up-to-date information, as it is based on a snapshot of patient exposures at some point in time.
+  Match Score: 0.75
+
+Query 22: How many patients are taking acetaminophen 325 MG Oral Tablet?
+  Expected: [[4]]
+  Got: **Answer:** There are 3 patients currently taking acetaminophen 325 MG Oral Tablet.
+
+**Key Findings:**
+
+• The query results indicate that only 3 unique individuals have been exposed to this specific drug formulation.
+• This count is based on the distinct person IDs in the DRUG_EXPOSURE table, where the drug_concept_id matches the standardized term for Acetaminophen 325 mg Oral Tablet (concept_id: 1127433).
+• The results are consistent across both query steps, suggesting that there are no additional patients taking this medication beyond those identified.
+
+**Limitations:** This analysis is based on a direct lookup of the DRUG_EXPOSURE table and assumes that the data is up-to-date and accurately reflects current patient exposures. However, it does not account for potential gaps in data collection or discrepancies between different data sources.
+  Match Score: 0.75
+
+Query 38: What is the distribution of patients by race?
+  Expected: [['Asian', 1], [None, 1], ['White', 24], ['Black or African American', 1]]
+  Got: **Distribution of Patients by Race:**
+
+Based on the query results, there are 26 patients with recorded race information.
+
+Key findings:
+
+• **White**: 24 patients (92.3% of patients with recorded race)
+• **Black or African American**: 1 patient (3.8% of patients with recorded race)
+• **Asian**: 1 patient (3.8% of patients with recorded race)
+
+**Limitations:**
+
+* Only 26 out of the total population have a recorded race, indicating potential issues with data completeness.
+* The small sample size for non-White races may limit the generalizability of these findings.
+
+These results suggest that the majority of patients in this dataset identify as White. However, due to the limited number of patients with recorded race information, further investigation is needed to understand the demographics of the entire population.
+  Match Score: 0.96
+
+Query 40: What is the distribution of patients by birth year?
+  Expected: [[1949, 1], [1965, 1], [2013, 2], [2003, 1], [1996, 1], [1967, 1], [1981, 1], [1971, 1], [1987, 1], [1955, 1], [2010, 2], [1968, 1], [2008, 1], [1963, 1], [2024, 1], [2014, 1], [1985, 1], [1973, 3], [1982, 1], [1977, 2], [1988, 2]]
+  Got: **Distribution of Patients by Birth Year:**
+
+Based on the query results, there are patients born between 1949 and 2024.
+
+Key findings:
+
+• The majority of patients (34.5%) were born in the 1970s.
+• The years with the fewest number of patients (<5) are 1949, 1955, 1963, 1965, 1967, 1968, and 2003.
+• The years with the most number of patients (>2) are 1973 (3), 1988 (2), 2010 (2), and 2013 (2).
+• There is a noticeable increase in birth year distribution from 1949 to 2024, indicating an increasing population over time.
+
+Limitations:
+- The data only includes patients with known birth years.
+- The sample size may not be representative of the entire population.
+  Match Score: 0.01
+
+Query 45: Counts of patients taking drug NDA020503 200 ACTUAT albuterol 0.09 MG/ACTUAT Metered Dose Inhaler an
+  Expected: [[1]]
+  Got: **Based on the query results, there are no patients taking both albuterol (NDA020503) and lisinopril within 60 days.**
+
+Key findings:
+
+• **No co-exposure detected**: Despite searching for patients who have taken both drugs within a 60-day window, no such patients were found.
+• **Query results consistent**: Both query steps yielded the same result: zero patients meeting the specified criteria.
+
+**Limitations and Considerations:**
+- The query focused on exact matches of drug concepts, which might not capture all possible instances of co-exposure (e.g., different strengths or formulations).
+- The 60-day window may be too narrow to detect co-exposure in some cases.
+- Further analysis is needed to determine if the absence of co-exposure patients is due to actual clinical practice patterns or limitations in the data.
+  Match Score: 0.00
+
+Query 48: How many patients are taking acetaminophen 325 MG Oral Tablet?
+  Expected: [[4]]
+  Got: **Answer:** There are 3 patients currently taking acetaminophen 325 MG Oral Tablet.
+
+**Key Findings:**
+
+• The query results indicate that only 3 unique individuals have been exposed to this specific drug formulation.
+• This count is based on the distinct person IDs in the DRUG_EXPOSURE table, where the drug_concept_id matches the standardized term for Acetaminophen 325 mg Oral Tablet (concept_id: 1127433).
+• The results are consistent across both query steps, suggesting that there are no additional patients taking this medication beyond those already counted.
+
+**Limitations:** This analysis is based on a direct lookup of the DRUG_EXPOSURE table and assumes that the data in this table is up-to-date and accurate. However, it does not account for potential gaps or inconsistencies in the data, such as missing exposures or incorrect drug_concept_id mappings.
+  Match Score: 0.75
+
