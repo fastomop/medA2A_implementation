@@ -3,7 +3,7 @@ MEDICAL A2A OMOP SYSTEM EVALUATION REPORT
 ================================================================================
 
 Timestamp: 20250912_161157
-Dataset: /Users/k24118093/Downloads/dataset_generated.json
+Dataset: dataset_generated.json
 
 OVERALL METRICS
 ----------------------------------------
